@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<robot name="two_link_arm">
+  <!--底座-->
+  <link name="base_link">
+    <visual>
+        <geometry>
+          <cylinder radius="0.08" length="0.05"/>
+        </geometry>
+    </visual>
+  </link>
+  <!--第一根连杆-->
+  <link name="link1">
+    <visual>
+        <origin xyz="0.25 0 0"/>
+        <geometry>
+          <box size = "0.5 0.05 0.05"/>
+        </geometry>
+    </visual>
+  </link>
+  <!--第一个关节-->
+  <joint name="joint1" type="revolute">
+    <parent link="base_link"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit
+        lower="-3.14"
+        upper="3.14"
+        effort="10"
+        velocity="2"
+    />
+  </joint>
+  <!--第二个连杆-->
+  <link name="link2">
+    <visual>
+      <origin xyz="0.20 0 0"/>
+      <geometry>
+        <box size ="0.4 0.05 0.05"/>
+      </geometry>
+    </visual>
+  </link>
+  <!--第二个关节-->
+  <joint name="joint2" type="revolute">
+  <parent link="link1"/>
+  <child link="link2"/>
+  <origin xyz="0.5 0 0" rpy="0 0 0"/>
+  <axis xyz="0 0 1"/>
+  <limit
+    lower="-3.14"
+    upper="3.14"
+    effort="10"
+    velocity="2"
+  />
+  </joint>
+  <!--第三个连杆-->
+
+  <!--末端执行器坐标系-->
+  <link name="tool0"/>
+  <joint name="tool0_joint" type="fixed">
+    <parent link="link2"/>
+    <child link="tool0"/>
+    <origin xyz="0.4 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>
