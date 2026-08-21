@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='wkj',
     maintainer_email='a1729200350@gmail.com',
-    description='TODO: Package description',
+    description='Planar three-link arm kinematics and inverse-velocity experiments.',
     license='Apache-2.0',
     extras_require={
         'test': [

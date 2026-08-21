@@ -1,3 +1,5 @@
+"""Monitor planar three-link arm kinematics and velocity mappings."""
+
 import math
 
 from geometry_msgs.msg import Twist
@@ -8,382 +10,298 @@ from sensor_msgs.msg import JointState
 
 
 class KinematicsMonitor(Node):
+    """Monitor forward kinematics and inverse-velocity solutions."""
 
     def __init__(self):
         super().__init__('kinematics_monitor')
 
-        # 两根连杆长度，和当前 URDF 一致
+        # 三根连杆长度，和当前 URDF 一致
         self.L1 = 0.5
         self.L2 = 0.4
+        self.L3 = 0.4
 
-        # 保存最近一次计算结果
         self.latest_result = None
-        self.previous_theta1 = None
-        self.previous_theta2 = None
+        self.previous_q = None
         self.previous_time = None
+        self.current_q = None
         self.current_J = None
 
-        # 实验用的 DLS 阻尼参数
-        # self.damping_lambda = 0.05
-
         # 自适应 DLS 参数
-        # sigma_min 大于这个值时，不使用阻尼
         self.sigma_threshold = 0.10
-        # 最大阻尼
         self.lambda_max = 0.05
 
-        # 订阅 /desired_cartesian_velocity 期望笛卡尔速度  即末端速度
         self.desired_velocity_subscription = self.create_subscription(
             Twist,
             '/desired_cartesian_velocity',
             self.desired_velocity_callback,
             10
         )
-
-        # 订阅 /joint_states
-        self.subscription = self.create_subscription(
+        self.joint_state_subscription = self.create_subscription(
             JointState,
             '/joint_states',
             self.joint_state_callback,
             10
         )
 
-        # 每 0.5 秒把最新计算结果打印一次   普通状态信息
-        # self.timer = self.create_timer(
-        #     0.5,
-        #     self.print_result
-        # )
-
         self.get_logger().info('Kinematics monitor started.')
 
-    def joint_state_callback(self, msg):
+    def calculate_jacobian(self, q):
+        """Return the planar translational Jacobian for joint vector q."""
+        theta1, theta2, theta3 = q
+        theta12 = theta1 + theta2
+        theta123 = theta12 + theta3
 
-        # 确认消息里存在我们需要的两个关节
-        if 'joint1' not in msg.name or 'joint2' not in msg.name:
-            return
-
-        # 找到 joint1、joint2 在数组中的位置
-        joint1_index = msg.name.index('joint1')
-        joint2_index = msg.name.index('joint2')
-
-        # 防止 position 数组长度不足
-        if len(msg.position) <= max(joint1_index, joint2_index):
-            return
-
-        # -----------------------------
-        # 1. 从 /joint_states 得到关节角度 q
-        # -----------------------------
-
-        theta1 = msg.position[joint1_index]
-        theta2 = msg.position[joint2_index]
-        # -----------------------------
-        # 2. Joint velocity q_dot 关节速度 q一点
-        # -----------------------------
-        current_time = self.get_clock().now().nanoseconds * 1e-9
-        theta1_dot = None
-        theta2_dot = None
-        velocity_source = None
-        # 如果 /joint_states 本身带有 velocity，就直接使用
-        if len(msg.velocity) > max(joint1_index, joint2_index):
-
-            theta1_dot = msg.velocity[joint1_index]
-            theta2_dot = msg.velocity[joint2_index]
-
-            velocity_source = 'JointState velocity'
-        # 如果没有 velocity，就通过 position 的变化估算
-        elif self.previous_time is not None:
-
-            dt = current_time - self.previous_time
-
-            if dt > 0.0:
-                theta1_dot = (
-                    theta1 - self.previous_theta1
-                ) / dt
-
-                theta2_dot = (
-                    theta2 - self.previous_theta2
-                ) / dt
-
-                velocity_source = 'finite difference'
-        # 保存这一次的数据，留给下一次计算
-        self.previous_theta1 = theta1
-        self.previous_theta2 = theta2
-        self.previous_time = current_time
-        # -----------------------------
-        # 3. Forward Kinematics 正运动学
-        # -----------------------------
-
-        x = (
-            self.L1 * math.cos(theta1)
-            + self.L2 * math.cos(theta1 + theta2)
-        )
-
-        y = (
-            self.L1 * math.sin(theta1)
-            + self.L2 * math.sin(theta1 + theta2)
-        )
-
-        # -----------------------------
-        # 4. Jacobian 雅克比矩阵
-        # -----------------------------
-
-        J = np.array([
+        return np.array([
             [
                 -self.L1 * math.sin(theta1)
-                - self.L2 * math.sin(theta1 + theta2),
-
-                -self.L2 * math.sin(theta1 + theta2)
+                - self.L2 * math.sin(theta12)
+                - self.L3 * math.sin(theta123),
+                -self.L2 * math.sin(theta12)
+                - self.L3 * math.sin(theta123),
+                -self.L3 * math.sin(theta123)
             ],
             [
                 self.L1 * math.cos(theta1)
-                + self.L2 * math.cos(theta1 + theta2),
-
-                self.L2 * math.cos(theta1 + theta2)
+                + self.L2 * math.cos(theta12)
+                + self.L3 * math.cos(theta123),
+                self.L2 * math.cos(theta12)
+                + self.L3 * math.cos(theta123),
+                self.L3 * math.cos(theta123)
             ]
         ])
-        # 当前姿态雅可比
-        self.current_J = J
-        # -----------------------------
-        # End-effector velocity 末端速度
-        #
-        # x_dot = J(q) q_dot
-        # -----------------------------
-        end_effector_velocity = None
 
-        if theta1_dot is not None and theta2_dot is not None:
+    def calculate_manipulability(self, q):
+        """Return Yoshikawa manipulability for joint vector q."""
+        jacobian = self.calculate_jacobian(q)
+        determinant = np.linalg.det(jacobian @ jacobian.T)
+        return math.sqrt(max(float(determinant), 0.0))
 
-            q_dot = np.array([
-                theta1_dot,
-                theta2_dot
-            ])
+    def manipulability_gradient(self, q):
+        """Estimate the manipulability gradient with central differences."""
+        epsilon = 1e-4
+        gradient = np.zeros(3)
 
-            end_effector_velocity = J @ q_dot
-            # 观察差分速度
-            # if abs(theta1_dot) > 1e-4 or abs(theta2_dot) > 1e-4:
-            #     self.get_logger().info(
-            #         '\n'
-            #         f'q_dot = [{theta1_dot:.4f}, {theta2_dot:.4f}] rad/s, '
-            #         f'joint1 contribution = '
-            #         f'[{velocity_from_joint1[0]:.4f}, '
-            #         f'{velocity_from_joint1[1]:.4f}] m/s\n'
-            #         f'joint2 contribution = '
-            #         f'[{velocity_from_joint2[0]:.4f}, '
-            #         f'{velocity_from_joint2[1]:.4f}] m/s\n'
-            #         f'total end-effector velocity = '
-            #         f'[{end_effector_velocity[0]:.4f}, '
-            #         f'{end_effector_velocity[1]:.4f}] m/s'
-            #     )
+        for index in range(3):
+            q_plus = q.copy()
+            q_minus = q.copy()
+            q_plus[index] += epsilon
+            q_minus[index] -= epsilon
+            gradient[index] = (
+                self.calculate_manipulability(q_plus)
+                - self.calculate_manipulability(q_minus)
+            ) / (2.0 * epsilon)
 
-        # -----------------------------
-        # 5. Singular Value Decomposition  SVD奇异值分解
-        # -----------------------------
+        return gradient
 
-        singular_values = np.linalg.svd(
-            J,
-            compute_uv=False
+    def calculate_joint_limit_velocity(self, q, jacobian, jacobian_pinv):
+        """Return a bounded null-space velocity away from joint limits."""
+        q_min = np.full(3, -math.pi)
+        q_max = np.full(3, math.pi)
+        epsilon = 0.01
+
+        lower_distance = np.maximum(q - q_min, epsilon)
+        upper_distance = np.maximum(q_max - q, epsilon)
+        nearest_distance = float(np.min(np.minimum(
+            lower_distance,
+            upper_distance
+        )))
+
+        joint_limit_gradient = (
+            -2.0 / lower_distance ** 3
+            + 2.0 / upper_distance ** 3
         )
 
-        sigma_max = np.max(singular_values)
-        sigma_min = np.min(singular_values)
+        base_gain = 0.01
+        sensitivity = 0.01
+        gain = float(np.clip(
+            base_gain + sensitivity / nearest_distance,
+            0.01,
+            0.5
+        ))
 
-        # -----------------------------
-        # 6. Condition Number 条件数：机械臂在最好运动方向和最差运动方向的比值
-        # -----------------------------
+        secondary_velocity = -gain * joint_limit_gradient
+        null_space_projector = np.eye(3) - jacobian_pinv @ jacobian
+        null_space_velocity = null_space_projector @ secondary_velocity
 
-        if sigma_min < 1e-9:
-            condition_number = math.inf
-        else:
+        max_speed = 1.0
+        max_value = float(np.max(np.abs(null_space_velocity)))
+        if max_value > max_speed:
+            null_space_velocity *= max_speed / max_value
+
+        return null_space_velocity, gain, nearest_distance
+
+    def joint_state_callback(self, msg):
+        """Update kinematics from the latest three-joint state."""
+        joint_names = ('joint1', 'joint2', 'joint3')
+        if not all(name in msg.name for name in joint_names):
+            return
+
+        indices = [msg.name.index(name) for name in joint_names]
+        max_index = max(indices)
+        if len(msg.position) <= max_index:
+            return
+
+        q = np.array([msg.position[index] for index in indices])
+        current_time = self.get_clock().now().nanoseconds * 1e-9
+        q_dot = None
+        velocity_source = None
+
+        if len(msg.velocity) > max_index:
+            q_dot = np.array([msg.velocity[index] for index in indices])
+            velocity_source = 'JointState velocity'
+        elif self.previous_time is not None:
+            dt = current_time - self.previous_time
+            if dt > 0.0:
+                q_dot = (q - self.previous_q) / dt
+                velocity_source = 'finite difference'
+
+        self.previous_q = q.copy()
+        self.previous_time = current_time
+        self.current_q = q
+
+        theta1, theta2, theta3 = q
+        theta12 = theta1 + theta2
+        theta123 = theta12 + theta3
+        x = (
+            self.L1 * math.cos(theta1)
+            + self.L2 * math.cos(theta12)
+            + self.L3 * math.cos(theta123)
+        )
+        y = (
+            self.L1 * math.sin(theta1)
+            + self.L2 * math.sin(theta12)
+            + self.L3 * math.sin(theta123)
+        )
+
+        jacobian = self.calculate_jacobian(q)
+        self.current_J = jacobian
+        end_effector_velocity = None
+        if q_dot is not None:
+            end_effector_velocity = jacobian @ q_dot
+
+        singular_values = np.linalg.svd(jacobian, compute_uv=False)
+        sigma_max = float(np.max(singular_values))
+        sigma_min = float(np.min(singular_values))
+        condition_number = math.inf
+        if sigma_min >= 1e-9:
             condition_number = sigma_max / sigma_min
 
-        # -----------------------------
-        # 7. Manipulability 可操作度：整体机械臂的运动能力，越大越好
-        #
-        # w = sqrt(det(J J^T))=σ1*σ2*....
-        # -----------------------------
-
-        JJ_T = J @ J.T
-
-        determinant = np.linalg.det(JJ_T)
-
-        # 防止浮点误差造成非常小的负数
-        determinant = max(determinant, 0.0)
-
-        manipulability = math.sqrt(determinant)
-
-        # 保存本次结果
         self.latest_result = {
-            'theta1': theta1,
-            'theta2': theta2,
-            'theta1_dot': theta1_dot,
-            'theta2_dot': theta2_dot,
+            'q': q,
+            'q_dot': q_dot,
             'x': x,
             'y': y,
-            'J': J,
+            'J': jacobian,
             'end_effector_velocity': end_effector_velocity,
             'velocity_source': velocity_source,
             'sigma_max': sigma_max,
             'sigma_min': sigma_min,
             'condition_number': condition_number,
-            'manipulability': manipulability
+            'manipulability': self.calculate_manipulability(q)
         }
 
     def desired_velocity_callback(self, msg):
-
-        if self.current_J is None:
-            self.get_logger().warn(
-                'No Jacobian available yet.'
-            )
+        """Compare MP, null-space, and adaptive-DLS velocity solutions."""
+        if self.current_J is None or self.current_q is None:
+            self.get_logger().warn('No joint state available yet.')
             return
 
-        J = self.current_J
-
-        # -----------------------------
-        # Desired Cartesian velocity 期望笛卡尔速度
-        # -----------------------------
-
-        x_dot_d = np.array([
-            msg.linear.x,       # 线性 X  Desired linear velocity in X
-            msg.linear.y        # 线性 Y
+        jacobian = self.current_J
+        q = self.current_q
+        desired_velocity = np.array([
+            msg.linear.x,
+            msg.linear.y
         ])
 
-        # -----------------------------
-        # 1. Moore-Penrose pseudoinverse  穆尔-彭罗斯伪逆
-        # -----------------------------
+        jacobian_pinv = np.linalg.pinv(jacobian)
+        q_dot_mp = jacobian_pinv @ desired_velocity
+        x_dot_mp = jacobian @ q_dot_mp
 
-        J_pinv = np.linalg.pinv(J)
-
-        q_dot_mp = J_pinv @ x_dot_d
-        mp_norm = np.linalg.norm(q_dot_mp)
-
-        # 实际能实现出的末端速度
-        x_dot_mp = J @ q_dot_mp
-
-        # -----------------------------
-        # Singular values decomposition  SVD奇异值分解
-        # -----------------------------
-        singular_values = np.linalg.svd(
-            J,
-            compute_uv=False
+        q_dot_null, secondary_gain, distance_to_limit = (
+            self.calculate_joint_limit_velocity(
+                q,
+                jacobian,
+                jacobian_pinv
+            )
         )
-        sigma_min = np.min(singular_values)
-        # -----------------------------
-        # Adaptive damping  自适应阻尼
-        # -----------------------------
+        q_dot_total = q_dot_mp + q_dot_null
+        x_dot_total = jacobian @ q_dot_total
+        null_space_residual = jacobian @ q_dot_null
+
+        singular_values = np.linalg.svd(jacobian, compute_uv=False)
+        sigma_min = float(np.min(singular_values))
         if sigma_min >= self.sigma_threshold:
             damping_lambda = 0.0
         else:
-            ratio = (
-                1.0
-                - sigma_min / self.sigma_threshold
-            )
-            damping_lambda = (
-                self.lambda_max
-                * ratio ** 2
-            )
+            ratio = 1.0 - sigma_min / self.sigma_threshold
+            damping_lambda = self.lambda_max * ratio ** 2
 
-        # -----------------------------
-        # Damped Least Squares  阻尼最小二乘法  阻尼伪逆
-        #
-        # q_dot =
-        # (J^T J + lambda^2 I)^(-1)
-        # J^T x_dot_d
-        # -----------------------------
-        lambda_sq = damping_lambda ** 2
-        A = (
-            J.T @ J
-            + lambda_sq * np.eye(2)
-        )
-        b = J.T @ x_dot_d
-        q_dot_dls = np.linalg.solve(A, b)
-        dls_norm = np.linalg.norm(q_dot_dls)
-        # 实际能实现出的末端速度
-        x_dot_dls = J @ q_dot_dls
-
-        # -----------------------------
-        # Print result  打印结果
-        # -----------------------------
+        if damping_lambda == 0.0:
+            q_dot_dls = q_dot_mp.copy()
+        else:
+            lambda_sq = damping_lambda ** 2
+            matrix = (
+                jacobian @ jacobian.T
+                + lambda_sq * np.eye(jacobian.shape[0])
+            )
+            q_dot_dls = (
+                jacobian.T
+                @ np.linalg.solve(matrix, desired_velocity)
+            )
+        x_dot_dls = jacobian @ q_dot_dls
 
         self.get_logger().info(
             '\n'
-            f'Desired Cartesian velocity:\n'
-            f'x_dot_d = '
-            f'[{x_dot_d[0]:.4f}, '
-            f'{x_dot_d[1]:.4f}] m/s\n'
-            f'\n'
-            f'MP pseudoinverse:\n'
-            f'q_dot = '
-            f'[{q_dot_mp[0]:.4f}, '
-            f'{q_dot_mp[1]:.4f}] rad/s\n'
-            f'achieved x_dot = '
-            f'[{x_dot_mp[0]:.4f}, '
-            f'{x_dot_mp[1]:.4f}] m/s\n'
-            f'\n'
-            f'Adaptive DLS:\n'
-            f'sigma_threshold = {self.sigma_threshold:.6f}\n'
-            f'lambda = {damping_lambda:.6f}\n'
-            f'q_dot = '
-            f'[{q_dot_dls[0]:.4f}, '
-            f'{q_dot_dls[1]:.4f}] rad/s\n'
-            f'achieved x_dot = '
-            f'[{x_dot_dls[0]:.4f}, '
-            f'{x_dot_dls[1]:.4f}] m/s\n'
-            f'||q_dot_MP|| = {mp_norm:.6f} rad/s\n'
-            f'||q_dot_DLS|| = {dls_norm:.6f} rad/s\n'
-            f'\n'
-            f'sigma_min = '
-            f'{sigma_min:.6f}'
-
+            f'Desired Cartesian velocity: {desired_velocity}\n'
+            f'MP joint velocity: {q_dot_mp}\n'
+            f'MP achieved velocity: {x_dot_mp}\n'
+            f'Null-space joint velocity: {q_dot_null}\n'
+            f'Null-space residual: {null_space_residual}\n'
+            f'Total joint velocity: {q_dot_total}\n'
+            f'Total achieved velocity: {x_dot_total}\n'
+            f'Distance to nearest limit: {distance_to_limit:.6f}\n'
+            f'Secondary gain: {secondary_gain:.6f}\n'
+            f'Adaptive DLS lambda: {damping_lambda:.6f}\n'
+            f'DLS joint velocity: {q_dot_dls}\n'
+            f'DLS achieved velocity: {x_dot_dls}'
         )
 
     def print_result(self):
-
+        """Print the most recently calculated kinematic state."""
         if self.latest_result is None:
             return
 
-        r = self.latest_result
-
-        J = r['J']
+        result = self.latest_result
+        jacobian = result['J']
         velocity_text = 'Joint velocity: waiting for data\n'
-        if r['end_effector_velocity'] is not None:
-
-            v = r['end_effector_velocity']
-
+        if result['end_effector_velocity'] is not None:
             velocity_text = (
-                f'q_dot = '
-                f"[{r['theta1_dot']:.4f}, "
-                f"{r['theta2_dot']:.4f}] rad/s\n"
-                f'End-effector velocity: '
-                f'x_dot = {v[0]:.4f} m/s, '
-                f'y_dot = {v[1]:.4f} m/s\n'
-                f'Velocity source: '
-                f"{r['velocity_source']}\n"
+                f"q_dot = {result['q_dot']} rad/s\n"
+                f'End-effector velocity = '
+                f"{result['end_effector_velocity']} m/s\n"
+                f"Velocity source: {result['velocity_source']}\n"
             )
+
         self.get_logger().info(
             '\n'
-            f"q = [{r['theta1']:.4f}, {r['theta2']:.4f}] rad\n"
+            f"q = {result['q']} rad\n"
             f'{velocity_text}'
-            f"End-effector: x = {r['x']:.4f} m, "
-            f"y = {r['y']:.4f} m\n"
-            f'Jacobian:\n'
-            f'[{J[0, 0]: .4f}  {J[0, 1]: .4f}]\n'
-            f'[{J[1, 0]: .4f}  {J[1, 1]: .4f}]\n'
-            f"sigma_max = {r['sigma_max']:.6f}\n"
-            f"sigma_min = {r['sigma_min']:.6f}\n"
-            f"condition number = {r['condition_number']}\n"
-            f"manipulability = {r['manipulability']:.6f}"
+            f"End-effector: x = {result['x']:.4f} m, "
+            f"y = {result['y']:.4f} m\n"
+            f'Jacobian:\n{jacobian}\n'
+            f"sigma_max = {result['sigma_max']:.6f}\n"
+            f"sigma_min = {result['sigma_min']:.6f}\n"
+            f"condition number = {result['condition_number']}\n"
+            f"manipulability = {result['manipulability']:.6f}"
         )
 
 
 def main(args=None):
-
+    """Run the kinematics monitor node."""
     rclpy.init(args=args)
-
     node = KinematicsMonitor()
-
     rclpy.spin(node)
-
     node.destroy_node()
-
     rclpy.shutdown()
 
 

@@ -3,7 +3,7 @@
 <package format="3">
   <name>two_link_arm_description</name>
   <version>0.0.0</version>
-  <description>URDF and display launch files for a planar two-link arm.</description>
+  <description>URDF and display launch files for a planar three-link arm.</description>
   <maintainer email="a1729200350@gmail.com">wkj</maintainer>
   <license>TODO: License declaration</license>
 
