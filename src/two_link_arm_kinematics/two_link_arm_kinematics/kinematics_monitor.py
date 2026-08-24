@@ -10,7 +10,7 @@ from sensor_msgs.msg import JointState
 
 
 class KinematicsMonitor(Node):
-    """Monitor kinematics, redundancy, and inverse-velocity experiments."""
+    """Monitor forward kinematics and inverse-velocity solutions."""
 
     def __init__(self):
         super().__init__('kinematics_monitor')
@@ -70,6 +70,54 @@ class KinematicsMonitor(Node):
             ]
         ])
 
+    def apply_priority_task(
+            self,
+            q_dot_previous,
+            N_previous,
+            J_task,
+            x_dot_task):
+
+        # 1. 有效 Jacobian
+        J_bar = J_task @ N_previous
+
+        # 2. 当前任务剩余需求
+        residual = (
+            x_dot_task
+            - J_task @ q_dot_previous
+        )
+
+        # 3. 有效 Jacobian 的 MP 伪逆
+        J_bar_pinv = np.linalg.pinv(J_bar)
+
+        # 4. 当前任务产生的关节速度修正
+        delta_q_dot = (
+            N_previous
+            @ J_bar_pinv
+            @ residual
+        )
+
+        # 5. 更新累计关节速度
+        q_dot_new = (
+            q_dot_previous
+            + delta_q_dot
+        )
+
+        # 6. 更新剩余零空间
+        N_new = (
+            N_previous
+            @ (
+                np.eye(N_previous.shape[0])
+                - J_bar_pinv @ J_bar
+            )
+        )
+
+        return (
+            q_dot_new,
+            N_new,
+            residual,
+            J_bar
+        )
+
     def calculate_manipulability(self, q):
         """Return Yoshikawa manipulability for joint vector q."""
         jacobian = self.calculate_jacobian(q)
@@ -77,7 +125,8 @@ class KinematicsMonitor(Node):
         return math.sqrt(max(float(determinant), 0.0))
 
     def manipulability_gradient(self, q):
-        """Estimate the manipulability gradient with central differences."""
+        """Estimate the manipulability gradient with central differences.
+            利用中心差分估计可操作性梯度"""
         epsilon = 1e-4
         gradient = np.zeros(3)
 
@@ -93,13 +142,45 @@ class KinematicsMonitor(Node):
 
         return gradient
 
-    def calculate_singularity_objective(self, q):
-        """Return a secondary objective that increases manipulability."""
-        singularity_gain = 0.1
-        return singularity_gain * self.manipulability_gradient(q)
+    def calculate_singularity(self,q,
+        #jacobian,
+        #jacobian_pinv
+        ):
+        # -----------------------------------------
+        # 奇异位形避免二级任务
+        # 目标：最大化机械臂可操作度 manipulability
+        # w(q) = sqrt(det(J J^T))
+        # 梯度方向：grad_w = ∇w(q)
+        # 表示可操作度随关节变化的最快方向
+        grad_w = self.manipulability_gradient(q)
+        # 奇异值规避增益 kw越大 规避效果越强
+        k_w = 0.1
+        # 奇异规避二级任务的期望关节速度方向 沿着增加可操作度方向运动
+        # z_singularity = k_w ∇w(q)
+        z_singularity = k_w * grad_w
+        # 零空间投影
+        # N = I - J^+ J  作用：将二级任务限制在不影响主任务的零空间内 
+        # J * N = 0
+        #N = np.eye(3)-jacobian_pinv@jacobian                       Z_singlularity
+        # 零空间奇异规避角速度
+        # q_dot_null = N z
+        #q_dot_null_singularity = N @ z_singularity                 Z_singlularity
+        #################  测试
+        # self.get_logger().info(
+        #     f"\nManipulability gradient:\n{grad_w}"
+        #     f"\nSingularity z:\n{z_singularity}"
+        #     #f"\nNull velocity:\n{q_dot_null_singularity}"          Z_singlularity
+        # )
+        #################
+        return z_singularity
+        #q_dot_null_singularity                                     Z_singlularity
 
-    def calculate_joint_limit_objective(self, q):
-        """Return the joint-limit objective, gain, and nearest distance."""
+    def calculate_joint_limit(self, q, 
+        #jacobian,         z_limit更改
+        #jacobian_pinv     z_limit更改
+        ):
+        """Return the joint-limit avoidance secondary objective.
+            计算关节限位避免二级任务 z_limit。"""
         q_min = np.full(3, -math.pi)
         q_max = np.full(3, math.pi)
         epsilon = 0.01
@@ -116,159 +197,30 @@ class KinematicsMonitor(Node):
             + 2.0 / upper_distance ** 3
         )
 
-        base_gain = 0.01
+        #自适应增益  k_l gain  
+        base_gain = 0.01   
         sensitivity = 0.01
         gain = float(np.clip(
             base_gain + sensitivity / nearest_distance,
             0.01,
             0.5
         ))
-        objective = -gain * joint_limit_gradient
+        #只输出z_limit更改
+        # secondary_velocity = -gain * joint_limit_gradient
+        # null_space_projector = np.eye(3) - jacobian_pinv @ jacobian
+        # null_space_velocity = null_space_projector @ secondary_velocity
 
-        return objective, gain, nearest_distance
+        # max_speed = 1.0
+        # max_value = float(np.max(np.abs(null_space_velocity)))
+        # if max_value > max_speed:
+        #     null_space_velocity *= max_speed / max_value
 
-    @staticmethod
-    def limit_joint_velocity(velocity, max_speed=1.0):
-        """Scale a joint-velocity vector without changing its direction."""
-        bounded_velocity = velocity.copy()
-        max_value = float(np.max(np.abs(bounded_velocity)))
-        if max_value > max_speed:
-            bounded_velocity *= max_speed / max_value
-        return bounded_velocity
+        z_limit = -gain * joint_limit_gradient
 
-    @staticmethod
-    def calculate_dls_pseudoinverse(jacobian, damping_lambda):
-        """Return the adaptive damped-least-squares pseudoinverse."""
-        if damping_lambda == 0.0:
-            return np.linalg.pinv(jacobian)
-
-        lambda_sq = damping_lambda ** 2
-        matrix = (
-            jacobian @ jacobian.T
-            + lambda_sq * np.eye(jacobian.shape[0])
-        )
-        return (
-            jacobian.T
-            @ np.linalg.solve(matrix, np.eye(jacobian.shape[0]))
-        )
-
-    @staticmethod
-    def projector_diagnostics(
-            jacobian,
-            mp_pseudoinverse,
-            dls_pseudoinverse,
-            secondary_objective,
-            desired_velocity):
-        """Compare strict MP and soft DLS null-space operators."""
-        identity = np.eye(jacobian.shape[1])
-        projector_mp = identity - mp_pseudoinverse @ jacobian
-        projector_dls = identity - dls_pseudoinverse @ jacobian
-
-        null_velocity_mp = projector_mp @ secondary_objective
-        null_velocity_dls = projector_dls @ secondary_objective
-        achieved_null_mp = jacobian @ null_velocity_mp
-        achieved_null_dls = jacobian @ null_velocity_dls
-
-        q_dot_dls = dls_pseudoinverse @ desired_velocity
-        achieved_dls = jacobian @ q_dot_dls
-        achieved_total_mp = jacobian @ (q_dot_dls + null_velocity_mp)
-        achieved_total_dls = jacobian @ (q_dot_dls + null_velocity_dls)
-
-        return {
-            'projector_mp': projector_mp,
-            'projector_dls': projector_dls,
-            'jn_mp_norm': np.linalg.norm(jacobian @ projector_mp),
-            'jn_dls_norm': np.linalg.norm(jacobian @ projector_dls),
-            'mp_idempotency_error': np.linalg.norm(
-                projector_mp @ projector_mp - projector_mp
-            ),
-            'dls_idempotency_error': np.linalg.norm(
-                projector_dls @ projector_dls - projector_dls
-            ),
-            'mp_secondary_leak': np.linalg.norm(achieved_null_mp),
-            'dls_secondary_leak': np.linalg.norm(achieved_null_dls),
-            'dls_task_error': np.linalg.norm(
-                achieved_dls - desired_velocity
-            ),
-            'mp_total_task_error': np.linalg.norm(
-                achieved_total_mp - desired_velocity
-            ),
-            'dls_total_task_error': np.linalg.norm(
-                achieved_total_dls - desired_velocity
-            )
-        }
-
-    @staticmethod
-    def task_hierarchy_diagnostics(
-            jacobian,
-            mp_pseudoinverse,
-            q_dot_task1,
-            tertiary_objective):
-        """Evaluate projected and unprojected secondary-task solutions."""
-        identity = np.eye(jacobian.shape[1])
-        projector1 = identity - mp_pseudoinverse @ jacobian
-
-        # 二级任务：期望 q2_dot=0.2、q3_dot=-0.2
-        jacobian2 = np.array([
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0]
-        ])
-        desired2 = np.array([0.2, -0.2])
-        residual2 = desired2 - jacobian2 @ q_dot_task1
-
-        # 对比实验：直接使用 J2 伪逆后再投影
-        wrong_correction = (
-            projector1
-            @ np.linalg.pinv(jacobian2)
-            @ residual2
-        )
-        wrong_total = q_dot_task1 + wrong_correction
-
-        # 严格任务优先级：先构造有效雅可比 J2*N1
-        effective_jacobian2 = jacobian2 @ projector1
-        hierarchy_rcond = 1e-8
-        effective_pseudoinverse2 = np.linalg.pinv(
-            effective_jacobian2,
-            rcond=hierarchy_rcond
-        )
-        correct_correction = (
-            projector1
-            @ effective_pseudoinverse2
-            @ residual2
-        )
-        correct_total = q_dot_task1 + correct_correction
-        achieved2 = jacobian2 @ correct_total
-        task2_error = desired2 - achieved2
-
-        # Task 1 和 Task 2 完成后的剩余零空间
-        projector2 = (
-            projector1
-            - effective_pseudoinverse2 @ effective_jacobian2
-        )
-        task3_velocity = projector2 @ tertiary_objective
-
-        return {
-            'desired2': desired2,
-            'effective_jacobian2': effective_jacobian2,
-            'effective_rank2': np.linalg.matrix_rank(
-                effective_jacobian2,
-                tol=hierarchy_rcond
-            ),
-            'wrong_task1': jacobian @ wrong_total,
-            'wrong_task2': jacobian2 @ wrong_total,
-            'correct_task1': jacobian @ correct_total,
-            'correct_task2': achieved2,
-            'task2_error': task2_error,
-            'task2_error_norm': np.linalg.norm(task2_error),
-            'projector2_norm': np.linalg.norm(projector2),
-            'task1_projector2_residual': np.linalg.norm(
-                jacobian @ projector2
-            ),
-            'task2_projector2_residual': np.linalg.norm(
-                jacobian2 @ projector2
-            ),
-            'task3_velocity_norm': np.linalg.norm(task3_velocity)
-        }
+        return z_limit,gain, nearest_distance
+        #null_space_velocity,       z_limit更改
+        
+        
 
     def joint_state_callback(self, msg):
         """Update kinematics from the latest three-joint state."""
@@ -341,7 +293,8 @@ class KinematicsMonitor(Node):
         }
 
     def desired_velocity_callback(self, msg):
-        """Run inverse-velocity and task-priority experiments."""
+        """Compare MP, null-space, and adaptive-DLS velocity solutions.
+            比较 MP 零空间 和自适应DLS速度解决方案"""
         if self.current_J is None or self.current_q is None:
             self.get_logger().warn('No joint state available yet.')
             return
@@ -353,22 +306,83 @@ class KinematicsMonitor(Node):
             msg.linear.y
         ])
 
-        mp_pseudoinverse = np.linalg.pinv(jacobian)
-        q_dot_mp = mp_pseudoinverse @ desired_velocity
-        achieved_mp = jacobian @ q_dot_mp
+        jacobian_pinv = np.linalg.pinv(jacobian)
+        q_dot_mp = jacobian_pinv @ desired_velocity
+        x_dot_mp = jacobian @ q_dot_mp
 
-        z_limit, secondary_gain, distance_to_limit = (
-            self.calculate_joint_limit_objective(q)
+        # 关节限位 二级任务
+        # q_dot_limit, secondary_gain, distance_to_limit = (
+        #     self.calculate_joint_limit_velocity(
+        #         q,
+        #         jacobian,
+        #         jacobian_pinv
+        #     )
+        # )
+        z_limit,secondary_gain,distance_to_limit = (
+            self.calculate_joint_limit(q)
         )
-        z_singularity = self.calculate_singularity_objective(q)
-        secondary_objective = z_limit + z_singularity
+        
 
-        projector_mp = (
-            np.eye(jacobian.shape[1])
-            - mp_pseudoinverse @ jacobian
+        # 奇异规避二级任务
+        # q_dot_singularity = (
+        #     self.calculate_singularity_velocity(
+        #         q,
+        #         jacobian,
+        #         jacobian_pinv
+        #     )
+        # )
+
+        # z_sing = k_s ∇w(q)
+        z_sing = self.calculate_singularity(q)
+
+        #q_dot_null=(q_dot_limit+q_dot_singularity)
+        ###############################################
+        #测试注释行
+        ###############################################
+        #q_dot_null =q_dot_singularity
+
+        ############   二级任务融合    ###############
+        #z_total=z_limit+z_sing 
+        z_total = (z_limit+z_sing)
+        # 零空间投影矩阵
+        # N = I - J+J    
+        
+        #N = np.eye(3) - jacobian_pinv @ jacobian
+        #代码模块化 
+        N = (
+            np.eye(jacobian.shape[1])   # jacobian.shape[1] 为关节数 n，用于自动构造 n×n 单位矩阵
+            - jacobian_pinv @ jacobian
         )
-        q_dot_null_raw = projector_mp @ secondary_objective
-        q_dot_null = self.limit_joint_velocity(q_dot_null_raw)
+        # N_zlimit = N @ z_limit
+        # N_zsing = N @ z_sing
+        # 零空间速度
+        #为了区分 数学计算得到的零空间速度  和工程限速后的零空间速度
+        q_dot_null_raw = N @ z_total  #原始数据
+        q_dot_null = q_dot_null_raw.copy()  #复制一份零空间角速度副本供后面限速
+        # 限制零空间最大关节速度
+        max_speed = 1.0
+        max_value = np.max(
+            np.abs(q_dot_null)
+        )
+
+        if max_value > max_speed:
+            q_dot_null *= (
+                max_speed /
+                max_value
+            )
+
+        # 验证两个二级任务合成后的运动是否让 w 增加。
+        # q_next = q + q_dot_null * dt
+        # dt = 0.01
+        # q_test = q + q_dot_null * dt
+        # w_current = self.calculate_manipulability(q)
+        # w_next = self.calculate_manipulability(q_test)
+        # self.get_logger().info(
+        #     f"\nw current = {w_current:.6f}"
+        #     f"\nw next = {w_next:.6f}"
+        # )    
+
+
 
         singular_values = np.linalg.svd(jacobian, compute_uv=False)
         sigma_min = float(np.min(singular_values))
@@ -378,84 +392,336 @@ class KinematicsMonitor(Node):
             ratio = 1.0 - sigma_min / self.sigma_threshold
             damping_lambda = self.lambda_max * ratio ** 2
 
-        dls_pseudoinverse = self.calculate_dls_pseudoinverse(
-            jacobian,
-            damping_lambda
+        if damping_lambda == 0.0:
+            # 非奇异区域：
+            # lambda = 0
+            # DLS退化为Moore-Penrose伪逆
+            jacobian_dls_pinv = jacobian_pinv.copy()
+        else:
+            # lambda^2
+            lambda_sq = damping_lambda ** 2
+            # J J^T + lambda^2 I
+            matrix = (
+                jacobian @ jacobian.T
+                + lambda_sq * np.eye(jacobian.shape[0])
+            )
+            # DLS伪逆
+            # J_dls^# = J^T (J J^T + lambda^2 I)^-1
+            jacobian_dls_pinv = (
+                jacobian.T
+                @ np.linalg.solve(matrix, np.eye(jacobian.shape[0]))
+            )
+        # DLS关节速度    
+        # q_dot_dls = J_dls^+ x_dot_des
+        q_dot_dls= (
+            jacobian_dls_pinv
+            @ desired_velocity
         )
-        q_dot_dls = dls_pseudoinverse @ desired_velocity
-        achieved_dls = jacobian @ q_dot_dls
+        # DLS实际末端速度
+        x_dot_dls = jacobian @ q_dot_dls
 
+        #把mp负责的主空间升级为DLS负责主空间
+        #q_dot_total 更改定义为DLS的主空间 + 零空间
+        #MP以后主要用于：
+        #1.构造严格零空间投影 N；
+        #2.作为实验基准，与DLS比较
         q_dot_total = q_dot_dls + q_dot_null
-        achieved_total = jacobian @ q_dot_total
+        x_dot_total = jacobian @ q_dot_total
         null_space_residual = jacobian @ q_dot_null
 
-        projector_results = self.projector_diagnostics(
-            jacobian,
-            mp_pseudoinverse,
-            dls_pseudoinverse,
-            secondary_objective,
-            desired_velocity
+        # -----------------------------------------
+        # 比较 MP 和 DLS 零空间投影性质
+        # -----------------------------------------
+        # DLS零空间投影矩阵
+        # N_dls = I - J_dls^# J
+        N_dls = (
+            np.eye(jacobian.shape[1])
+            - jacobian_dls_pinv @ jacobian
         )
-        hierarchy_results = self.task_hierarchy_diagnostics(
-            jacobian,
-            mp_pseudoinverse,
-            q_dot_mp,
-            z_singularity
+        # 验证 JN 是否接近0
+        JN_mp = jacobian @ N
+        JN_dls = jacobian @ N_dls
+        # 计算矩阵大小
+        JN_mp_norm = np.linalg.norm(JN_mp)
+        JN_dls_norm = np.linalg.norm(JN_dls)
+
+        #验证投影矩阵的幂等性  N^2 = N
+        N_mp_error = np.linalg.norm(
+            N @ N - N
         )
 
+        N_dls_error = np.linalg.norm(
+            N_dls @ N_dls - N_dls
+        )
+
+        # ==========================================
+        # DLS + Null Space 对比实验
+        # ==========================================
+
+        # 方案 A：
+        # DLS 主任务 + MP 严格零空间
+        q_dot_null_A = N @ z_total
+        q_dot_total_A = (
+            q_dot_dls
+            + q_dot_null_A
+        )
+        x_dot_null_A = (
+            jacobian @ q_dot_null_A
+        )
+        x_dot_total_A = (
+            jacobian @ q_dot_total_A
+        )
+        secondary_leak_A = np.linalg.norm(      #二级任务干扰程度   期望：||J*N_mp*z||≈0        利用欧式范数 把数组里的数压缩成一个数
+            x_dot_null_A
+        )
+
+        # 方案 B：
+        # DLS 主任务 + DLS 软零空间
+        q_dot_null_B = N_dls @ z_total
+
+        q_dot_total_B = (
+            q_dot_dls
+            + q_dot_null_B
+        )
+        x_dot_null_B = (
+            jacobian @ q_dot_null_B
+        )
+        x_dot_total_B = (
+            jacobian @ q_dot_total_B
+        )
+        secondary_leak_B = np.linalg.norm(      #二级任务干扰程度       期望：||J*N_dls*z||>0       
+            x_dot_null_B
+        )
+
+        # ==========================================
+        # 最终末端误差
+        # error = ||x_dot_actual - x_dot_desired||
+        # ==========================================
+        # 只有DLS主任务时的任务误差         #e_DLS=||x_dot_DLS-x_dot_d||
+        task_error_dls = np.linalg.norm(
+            x_dot_dls - desired_velocity
+        )
+
+        # 方案A：
+        # DLS主任务 + MP严格零空间          #e_A=||x_dot_total_A-x_dot_d||
+        #预期 ：e_A=e_DLS
+        task_error_A = np.linalg.norm(
+            x_dot_total_A - desired_velocity
+        )
+
+        # 方案B：
+        # DLS主任务 + DLS软零空间           #e_B=||x_dot_total_B-x_dot_d||
+        #预期 ：e_B！=e_DLS
+        task_error_B = np.linalg.norm(
+            x_dot_total_B - desired_velocity
+        )
+
+        # ==========================================
+        # 严格任务优先级实验
+        # ==========================================
+
+        #一级任务 
+        q_dot_task1 = q_dot_mp
+        N1 = (
+            np.eye(jacobian.shape[1])
+            - jacobian_pinv @ jacobian
+        )
+        #二级任务：控制第三关节速度
+        J2 = np.array([
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
+        x_dot_2_desired = np.array([
+            0.2,    # q2_dot
+            -0.2     # q3_dot
+        ])
+        #计算残差 r    r2 = x_dot_2-J_2*q_dot_1
+        secondary_residual = (
+            x_dot_2_desired
+            - J2 @ q_dot_task1
+        )
+        #错误实验   直接使用 J2 的伪逆求解二级任务，再通过 N1 投影
+        #预测 结论  一级任务不被破坏 二级任务未达成   
+        y_wrong = (
+            np.linalg.pinv(J2)
+            @ secondary_residual
+        )
+        q_dot_task2_wrong = (
+            N1 @ y_wrong
+        )
+        q_dot_total_wrong = (
+            q_dot_task1
+            + q_dot_task2_wrong
+        )
+        task1_wrong = (
+            jacobian @ q_dot_total_wrong
+        )
+        task2_wrong = (
+            J2 @ q_dot_total_wrong
+        )
+
+        #正确方法
+        #一级任务后真正可以使用雅可比
+        J2_projected = J2 @ N1
+        #解J_2*N_1*y=r_2
+        y_task2 = (
+            np.linalg.pinv(J2_projected)
+            @ secondary_residual
+        )
+        #二级修正
+        q_dot_task2_correct = (
+            N1 @ y_task2
+        )
+        #正确的关节总速度
+        q_dot_total_task2 = (
+            q_dot_task1
+            + q_dot_task2_correct
+        )
+        task1_correct = (
+            jacobian @ q_dot_total_task2
+        )
+        task2_achieved = (
+            J2 @ q_dot_total_task2
+        )
+        task2_error = (
+            x_dot_2_desired
+            - task2_achieved
+        )
+        task2_error_norm = np.linalg.norm(
+            task2_error
+        )
+
+        # ==========================================
+        # Task 1 + Task 2 完成后的剩余零空间
+        # ==========================================
+        #J2^——伪逆
+        J2_projected_pinv = np.linalg.pinv(
+            J2_projected
+        )
+        #N2 =N1-J2^——伪逆*J2^——  剩余部分N2=一级剩余空间-二级占用空间  同时不影响 Task 1 和 Task 2 的所有关节运动。
+        N2 = (
+            N1
+            - J2_projected_pinv @ J2_projected
+        )
+        N2_norm = np.linalg.norm(N2)  #对N2 求范数  证明已经无自由度
+
+        task1_N2_residual = np.linalg.norm(    #J1N2  不会破坏一级任务
+            jacobian @ N2
+        )
+        task2_N2_residual = np.linalg.norm(    #J2N2  不会破坏二级任务
+            J2 @ N2
+        )
+        #增加三级任务 验证任务存在但机器人没有自由度执行任务
+        q_dot_task3 = N2 @ z_sing
+
+        # ==========================================
+        # 严格任务优先级递归实验
+        # ==========================================
+        # 初始化
+        # q_dot_0 = 0     N0 = I
+        q_dot_0 = np.zeros(
+            jacobian.shape[1]
+        )
+        N0 = np.eye(
+            jacobian.shape[1]
+        )
+        # 一级任务
+        # J1 * q_dot = x_dot_1
+        J1 = jacobian
+        x_dot_1 = desired_velocity
+        q_dot_1, N1, r1, J1_bar = (
+            self.apply_priority_task(
+                q_dot_0,
+                N0,
+                J1,
+                x_dot_1
+            )
+        )
+        # 二级任务
+        # 控制第三关节角速度  q_dot_3 = -0.2 rad/s
+        J2 = np.array([
+            [0.0, 0.0, 1.0]
+        ])
+        x_dot_2 = np.array([-0.2])
+        q_dot_2, N2, r2, J2_bar = (
+            self.apply_priority_task(
+                q_dot_1,
+                N1,
+                J2,
+                x_dot_2
+            )
+        )
         self.get_logger().info(
             '\n'
             f'Desired Cartesian velocity: {desired_velocity}\n'
             f'MP joint velocity: {q_dot_mp}\n'
-            f'MP achieved velocity: {achieved_mp}\n'
-            f'DLS lambda: {damping_lambda:.6f}\n'
-            f'DLS joint velocity: {q_dot_dls}\n'
-            f'DLS achieved velocity: {achieved_dls}\n'
-            f'Joint-limit objective: {z_limit}\n'
-            f'Singularity objective: {z_singularity}\n'
-            f'Combined secondary objective: {secondary_objective}\n'
-            f'Raw null-space velocity: {q_dot_null_raw}\n'
-            f'Bounded null-space velocity: {q_dot_null}\n'
+            f'MP achieved velocity: {x_dot_mp}\n'
+            f'Null-space joint velocity: {q_dot_null}\n'
             f'Null-space residual: {null_space_residual}\n'
             f'Total joint velocity: {q_dot_total}\n'
-            f'Total achieved velocity: {achieved_total}\n'
-            f'Distance to nearest limit: {distance_to_limit:.6f}\n'
-            f'Secondary gain: {secondary_gain:.6f}\n'
-            f"||J*N_MP||: {projector_results['jn_mp_norm']:.10e}\n"
-            f"||J*N_DLS||: {projector_results['jn_dls_norm']:.10e}\n"
-            f'MP idempotency error: '
-            f"{projector_results['mp_idempotency_error']:.10e}\n"
-            f'DLS idempotency error: '
-            f"{projector_results['dls_idempotency_error']:.10e}\n"
-            f'MP secondary leak: '
-            f"{projector_results['mp_secondary_leak']:.10e}\n"
-            f'DLS secondary leak: '
-            f"{projector_results['dls_secondary_leak']:.10e}\n"
-            f'Pure DLS task error: '
-            f"{projector_results['dls_task_error']:.10e}\n"
-            f'DLS + MP-null task error: '
-            f"{projector_results['mp_total_task_error']:.10e}\n"
-            f'DLS + DLS-null task error: '
-            f"{projector_results['dls_total_task_error']:.10e}\n"
-            '===== Strict task hierarchy =====\n'
-            f"Desired Task 2: {hierarchy_results['desired2']}\n"
-            f"Effective J2 rank: {hierarchy_results['effective_rank2']}\n"
-            f"Wrong method Task 1: {hierarchy_results['wrong_task1']}\n"
-            f"Wrong method Task 2: {hierarchy_results['wrong_task2']}\n"
-            f'Correct method Task 1: '
-            f"{hierarchy_results['correct_task1']}\n"
-            f'Correct method Task 2: '
-            f"{hierarchy_results['correct_task2']}\n"
-            f"Task 2 residual: {hierarchy_results['task2_error']}\n"
-            f'Task 2 residual norm: '
-            f"{hierarchy_results['task2_error_norm']:.10e}\n"
-            f"||N2||: {hierarchy_results['projector2_norm']:.10e}\n"
-            f'||J1*N2||: '
-            f"{hierarchy_results['task1_projector2_residual']:.10e}\n"
-            f'||J2*N2||: '
-            f"{hierarchy_results['task2_projector2_residual']:.10e}\n"
-            f'||N2*z3||: '
-            f"{hierarchy_results['task3_velocity_norm']:.10e}"
+            f'Total achieved velocity: {x_dot_total}\n'
+            #f'Distance to nearest limit: {distance_to_limit:.6f}\n'    测试
+            #f'Secondary gain: {secondary_gain:.6f}\n'                  测试
+            #f'Singularity avoidance velocity: {q_dot_null}\n'          测试
+            f'z_sing: {z_sing}\n'
+            f'z_limit: {z_limit}\n'
+            f'z_total: {z_total}\n'
+            #f'Nz_limit:{N_zlimit}\n'
+            #f'Nz_sing:{N_zsing}\n'
+            #f'\nJ*N_mp:\n{JN_mp}\n'
+            #f'||J*N_mp|| = {JN_mp_norm:.8f}\n'
+            #f'J*N_dls:\n{JN_dls}\n'
+            #f'||J*N_DLS|| = {JN_dls_norm:.8f}\n'
+            #f'||N_MP^2 - N_MP|| = {N_mp_error:.10e}\n'
+            #f'||N_DLS^2 - N_DLS|| = {N_dls_error:.10e}'
+            # f'Adaptive DLS lambda: {damping_lambda:.6f}\n'
+            # f'DLS joint velocity: {q_dot_dls}\n'
+            # f'DLS achieved velocity: {x_dot_dls}'
+            # f'方案 A - DLS + MP null space:\n'
+            # f'Null velocity A: {q_dot_null_A}\n'
+            # f'Null Cartesian leakage A: {x_dot_null_A}\n'
+            # f'Total achieved velocity A: {x_dot_total_A}\n'
+            # f'Secondary leakage norm A: {secondary_leak_A:.10e}\n'
+            # f'Task error A: {task_error_A:.10e}\n'
+            # '\n'
+            # f'方案 B - DLS + DLS null operator:\n'
+            # f'Null velocity B: {q_dot_null_B}\n'
+            # f'Null Cartesian leakage B: {x_dot_null_B}\n'
+            # f'Total achieved velocity B: {x_dot_total_B}\n'
+            # f'Secondary leakage norm B: {secondary_leak_B:.10e}\n'
+            # f'Task error B: {task_error_B:.10e}\n'
+            # '\n'
+            # f'Pure DLS task error: {task_error_dls:.10e}'
+            # f'===== 严格任务分级实验 =====\n'
+            # f'二级任务 期望关节三角速度: {x_dot_2_desired}\n'
+            # f'一级任务 基础关节速度: {q_dot_task1}\n'
+            # f'二级任务残差: {secondary_residual}\n'    
+            # f'投影后的二级雅克比: {J2_projected}\n'
+            # '--- 错误实验: 先计算J2伪逆 ---\n'
+            # f'总错误关节速度: {q_dot_total_wrong}\n'
+            # f'一级任务 错误实现的: {task1_wrong}\n'
+            # f'二级任务 错误实现的: {task2_wrong}\n'
+            # '--- 正确实验：计算投影后的二级雅克比伪逆 ---\n'
+            # f'总正确关节速度: {q_dot_total_correct}\n'
+            # f'一级任务 实现的: {task1_correct}\n'
+            # f'二级任务 实现的: {task2_correct}'       
+            # '===== 二级任务后剩余零空间 =====\n'
+            # f'||N2|| = {N2_norm:.10e}\n'
+            # f'||J1*N2|| = {task1_N2_residual:.10e}\n'
+            # f'||J2*N2|| = {task2_N2_residual:.10e}\n' 
+            # f'Nz_sing = {np.linalg.norm(q_dot_task3):.10e}\n'
+            '===== 二级不可行任务实验 =====\n'
+            f'期望二级任务关节速度: {x_dot_2_desired}\n'
+            f'第二个有效雅可比:\n{J2_projected}\n'
+            f'第二个有效雅可比的秩: '
+            f'{np.linalg.matrix_rank(J2_projected)}\n'
+            f'总关节速度: {q_dot_total_task2}\n'
+            f'一级任务达成的: '
+            f'{jacobian @ q_dot_total_task2}\n'
+            f'二级任务达成的: {task2_achieved}\n'
+            f'二级任务残差: {task2_error}\n'
+            f'||二级任务残差||: '
+            f'{task2_error_norm:.10e}'
         )
 
     def print_result(self):
