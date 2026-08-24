@@ -10,7 +10,7 @@ from sensor_msgs.msg import JointState
 
 
 class KinematicsMonitor(Node):
-    """Monitor forward kinematics and inverse-velocity solutions."""
+    """Monitor kinematics, redundancy, and inverse-velocity experiments."""
 
     def __init__(self):
         super().__init__('kinematics_monitor')
@@ -93,8 +93,13 @@ class KinematicsMonitor(Node):
 
         return gradient
 
-    def calculate_joint_limit_velocity(self, q, jacobian, jacobian_pinv):
-        """Return a bounded null-space velocity away from joint limits."""
+    def calculate_singularity_objective(self, q):
+        """Return a secondary objective that increases manipulability."""
+        singularity_gain = 0.1
+        return singularity_gain * self.manipulability_gradient(q)
+
+    def calculate_joint_limit_objective(self, q):
+        """Return the joint-limit objective, gain, and nearest distance."""
         q_min = np.full(3, -math.pi)
         q_max = np.full(3, math.pi)
         epsilon = 0.01
@@ -118,17 +123,152 @@ class KinematicsMonitor(Node):
             0.01,
             0.5
         ))
+        objective = -gain * joint_limit_gradient
 
-        secondary_velocity = -gain * joint_limit_gradient
-        null_space_projector = np.eye(3) - jacobian_pinv @ jacobian
-        null_space_velocity = null_space_projector @ secondary_velocity
+        return objective, gain, nearest_distance
 
-        max_speed = 1.0
-        max_value = float(np.max(np.abs(null_space_velocity)))
+    @staticmethod
+    def limit_joint_velocity(velocity, max_speed=1.0):
+        """Scale a joint-velocity vector without changing its direction."""
+        bounded_velocity = velocity.copy()
+        max_value = float(np.max(np.abs(bounded_velocity)))
         if max_value > max_speed:
-            null_space_velocity *= max_speed / max_value
+            bounded_velocity *= max_speed / max_value
+        return bounded_velocity
 
-        return null_space_velocity, gain, nearest_distance
+    @staticmethod
+    def calculate_dls_pseudoinverse(jacobian, damping_lambda):
+        """Return the adaptive damped-least-squares pseudoinverse."""
+        if damping_lambda == 0.0:
+            return np.linalg.pinv(jacobian)
+
+        lambda_sq = damping_lambda ** 2
+        matrix = (
+            jacobian @ jacobian.T
+            + lambda_sq * np.eye(jacobian.shape[0])
+        )
+        return (
+            jacobian.T
+            @ np.linalg.solve(matrix, np.eye(jacobian.shape[0]))
+        )
+
+    @staticmethod
+    def projector_diagnostics(
+            jacobian,
+            mp_pseudoinverse,
+            dls_pseudoinverse,
+            secondary_objective,
+            desired_velocity):
+        """Compare strict MP and soft DLS null-space operators."""
+        identity = np.eye(jacobian.shape[1])
+        projector_mp = identity - mp_pseudoinverse @ jacobian
+        projector_dls = identity - dls_pseudoinverse @ jacobian
+
+        null_velocity_mp = projector_mp @ secondary_objective
+        null_velocity_dls = projector_dls @ secondary_objective
+        achieved_null_mp = jacobian @ null_velocity_mp
+        achieved_null_dls = jacobian @ null_velocity_dls
+
+        q_dot_dls = dls_pseudoinverse @ desired_velocity
+        achieved_dls = jacobian @ q_dot_dls
+        achieved_total_mp = jacobian @ (q_dot_dls + null_velocity_mp)
+        achieved_total_dls = jacobian @ (q_dot_dls + null_velocity_dls)
+
+        return {
+            'projector_mp': projector_mp,
+            'projector_dls': projector_dls,
+            'jn_mp_norm': np.linalg.norm(jacobian @ projector_mp),
+            'jn_dls_norm': np.linalg.norm(jacobian @ projector_dls),
+            'mp_idempotency_error': np.linalg.norm(
+                projector_mp @ projector_mp - projector_mp
+            ),
+            'dls_idempotency_error': np.linalg.norm(
+                projector_dls @ projector_dls - projector_dls
+            ),
+            'mp_secondary_leak': np.linalg.norm(achieved_null_mp),
+            'dls_secondary_leak': np.linalg.norm(achieved_null_dls),
+            'dls_task_error': np.linalg.norm(
+                achieved_dls - desired_velocity
+            ),
+            'mp_total_task_error': np.linalg.norm(
+                achieved_total_mp - desired_velocity
+            ),
+            'dls_total_task_error': np.linalg.norm(
+                achieved_total_dls - desired_velocity
+            )
+        }
+
+    @staticmethod
+    def task_hierarchy_diagnostics(
+            jacobian,
+            mp_pseudoinverse,
+            q_dot_task1,
+            tertiary_objective):
+        """Evaluate projected and unprojected secondary-task solutions."""
+        identity = np.eye(jacobian.shape[1])
+        projector1 = identity - mp_pseudoinverse @ jacobian
+
+        # 二级任务：期望 q2_dot=0.2、q3_dot=-0.2
+        jacobian2 = np.array([
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
+        desired2 = np.array([0.2, -0.2])
+        residual2 = desired2 - jacobian2 @ q_dot_task1
+
+        # 对比实验：直接使用 J2 伪逆后再投影
+        wrong_correction = (
+            projector1
+            @ np.linalg.pinv(jacobian2)
+            @ residual2
+        )
+        wrong_total = q_dot_task1 + wrong_correction
+
+        # 严格任务优先级：先构造有效雅可比 J2*N1
+        effective_jacobian2 = jacobian2 @ projector1
+        hierarchy_rcond = 1e-8
+        effective_pseudoinverse2 = np.linalg.pinv(
+            effective_jacobian2,
+            rcond=hierarchy_rcond
+        )
+        correct_correction = (
+            projector1
+            @ effective_pseudoinverse2
+            @ residual2
+        )
+        correct_total = q_dot_task1 + correct_correction
+        achieved2 = jacobian2 @ correct_total
+        task2_error = desired2 - achieved2
+
+        # Task 1 和 Task 2 完成后的剩余零空间
+        projector2 = (
+            projector1
+            - effective_pseudoinverse2 @ effective_jacobian2
+        )
+        task3_velocity = projector2 @ tertiary_objective
+
+        return {
+            'desired2': desired2,
+            'effective_jacobian2': effective_jacobian2,
+            'effective_rank2': np.linalg.matrix_rank(
+                effective_jacobian2,
+                tol=hierarchy_rcond
+            ),
+            'wrong_task1': jacobian @ wrong_total,
+            'wrong_task2': jacobian2 @ wrong_total,
+            'correct_task1': jacobian @ correct_total,
+            'correct_task2': achieved2,
+            'task2_error': task2_error,
+            'task2_error_norm': np.linalg.norm(task2_error),
+            'projector2_norm': np.linalg.norm(projector2),
+            'task1_projector2_residual': np.linalg.norm(
+                jacobian @ projector2
+            ),
+            'task2_projector2_residual': np.linalg.norm(
+                jacobian2 @ projector2
+            ),
+            'task3_velocity_norm': np.linalg.norm(task3_velocity)
+        }
 
     def joint_state_callback(self, msg):
         """Update kinematics from the latest three-joint state."""
@@ -201,7 +341,7 @@ class KinematicsMonitor(Node):
         }
 
     def desired_velocity_callback(self, msg):
-        """Compare MP, null-space, and adaptive-DLS velocity solutions."""
+        """Run inverse-velocity and task-priority experiments."""
         if self.current_J is None or self.current_q is None:
             self.get_logger().warn('No joint state available yet.')
             return
@@ -213,20 +353,22 @@ class KinematicsMonitor(Node):
             msg.linear.y
         ])
 
-        jacobian_pinv = np.linalg.pinv(jacobian)
-        q_dot_mp = jacobian_pinv @ desired_velocity
-        x_dot_mp = jacobian @ q_dot_mp
+        mp_pseudoinverse = np.linalg.pinv(jacobian)
+        q_dot_mp = mp_pseudoinverse @ desired_velocity
+        achieved_mp = jacobian @ q_dot_mp
 
-        q_dot_null, secondary_gain, distance_to_limit = (
-            self.calculate_joint_limit_velocity(
-                q,
-                jacobian,
-                jacobian_pinv
-            )
+        z_limit, secondary_gain, distance_to_limit = (
+            self.calculate_joint_limit_objective(q)
         )
-        q_dot_total = q_dot_mp + q_dot_null
-        x_dot_total = jacobian @ q_dot_total
-        null_space_residual = jacobian @ q_dot_null
+        z_singularity = self.calculate_singularity_objective(q)
+        secondary_objective = z_limit + z_singularity
+
+        projector_mp = (
+            np.eye(jacobian.shape[1])
+            - mp_pseudoinverse @ jacobian
+        )
+        q_dot_null_raw = projector_mp @ secondary_objective
+        q_dot_null = self.limit_joint_velocity(q_dot_null_raw)
 
         singular_values = np.linalg.svd(jacobian, compute_uv=False)
         sigma_min = float(np.min(singular_values))
@@ -236,34 +378,84 @@ class KinematicsMonitor(Node):
             ratio = 1.0 - sigma_min / self.sigma_threshold
             damping_lambda = self.lambda_max * ratio ** 2
 
-        if damping_lambda == 0.0:
-            q_dot_dls = q_dot_mp.copy()
-        else:
-            lambda_sq = damping_lambda ** 2
-            matrix = (
-                jacobian @ jacobian.T
-                + lambda_sq * np.eye(jacobian.shape[0])
-            )
-            q_dot_dls = (
-                jacobian.T
-                @ np.linalg.solve(matrix, desired_velocity)
-            )
-        x_dot_dls = jacobian @ q_dot_dls
+        dls_pseudoinverse = self.calculate_dls_pseudoinverse(
+            jacobian,
+            damping_lambda
+        )
+        q_dot_dls = dls_pseudoinverse @ desired_velocity
+        achieved_dls = jacobian @ q_dot_dls
+
+        q_dot_total = q_dot_dls + q_dot_null
+        achieved_total = jacobian @ q_dot_total
+        null_space_residual = jacobian @ q_dot_null
+
+        projector_results = self.projector_diagnostics(
+            jacobian,
+            mp_pseudoinverse,
+            dls_pseudoinverse,
+            secondary_objective,
+            desired_velocity
+        )
+        hierarchy_results = self.task_hierarchy_diagnostics(
+            jacobian,
+            mp_pseudoinverse,
+            q_dot_mp,
+            z_singularity
+        )
 
         self.get_logger().info(
             '\n'
             f'Desired Cartesian velocity: {desired_velocity}\n'
             f'MP joint velocity: {q_dot_mp}\n'
-            f'MP achieved velocity: {x_dot_mp}\n'
-            f'Null-space joint velocity: {q_dot_null}\n'
+            f'MP achieved velocity: {achieved_mp}\n'
+            f'DLS lambda: {damping_lambda:.6f}\n'
+            f'DLS joint velocity: {q_dot_dls}\n'
+            f'DLS achieved velocity: {achieved_dls}\n'
+            f'Joint-limit objective: {z_limit}\n'
+            f'Singularity objective: {z_singularity}\n'
+            f'Combined secondary objective: {secondary_objective}\n'
+            f'Raw null-space velocity: {q_dot_null_raw}\n'
+            f'Bounded null-space velocity: {q_dot_null}\n'
             f'Null-space residual: {null_space_residual}\n'
             f'Total joint velocity: {q_dot_total}\n'
-            f'Total achieved velocity: {x_dot_total}\n'
+            f'Total achieved velocity: {achieved_total}\n'
             f'Distance to nearest limit: {distance_to_limit:.6f}\n'
             f'Secondary gain: {secondary_gain:.6f}\n'
-            f'Adaptive DLS lambda: {damping_lambda:.6f}\n'
-            f'DLS joint velocity: {q_dot_dls}\n'
-            f'DLS achieved velocity: {x_dot_dls}'
+            f"||J*N_MP||: {projector_results['jn_mp_norm']:.10e}\n"
+            f"||J*N_DLS||: {projector_results['jn_dls_norm']:.10e}\n"
+            f'MP idempotency error: '
+            f"{projector_results['mp_idempotency_error']:.10e}\n"
+            f'DLS idempotency error: '
+            f"{projector_results['dls_idempotency_error']:.10e}\n"
+            f'MP secondary leak: '
+            f"{projector_results['mp_secondary_leak']:.10e}\n"
+            f'DLS secondary leak: '
+            f"{projector_results['dls_secondary_leak']:.10e}\n"
+            f'Pure DLS task error: '
+            f"{projector_results['dls_task_error']:.10e}\n"
+            f'DLS + MP-null task error: '
+            f"{projector_results['mp_total_task_error']:.10e}\n"
+            f'DLS + DLS-null task error: '
+            f"{projector_results['dls_total_task_error']:.10e}\n"
+            '===== Strict task hierarchy =====\n'
+            f"Desired Task 2: {hierarchy_results['desired2']}\n"
+            f"Effective J2 rank: {hierarchy_results['effective_rank2']}\n"
+            f"Wrong method Task 1: {hierarchy_results['wrong_task1']}\n"
+            f"Wrong method Task 2: {hierarchy_results['wrong_task2']}\n"
+            f'Correct method Task 1: '
+            f"{hierarchy_results['correct_task1']}\n"
+            f'Correct method Task 2: '
+            f"{hierarchy_results['correct_task2']}\n"
+            f"Task 2 residual: {hierarchy_results['task2_error']}\n"
+            f'Task 2 residual norm: '
+            f"{hierarchy_results['task2_error_norm']:.10e}\n"
+            f"||N2||: {hierarchy_results['projector2_norm']:.10e}\n"
+            f'||J1*N2||: '
+            f"{hierarchy_results['task1_projector2_residual']:.10e}\n"
+            f'||J2*N2||: '
+            f"{hierarchy_results['task2_projector2_residual']:.10e}\n"
+            f'||N2*z3||: '
+            f"{hierarchy_results['task3_velocity_norm']:.10e}"
         )
 
     def print_result(self):
