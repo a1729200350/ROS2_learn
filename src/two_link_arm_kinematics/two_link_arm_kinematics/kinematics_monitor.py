@@ -252,7 +252,76 @@ class KinematicsMonitor(Node):
         return z_limit,gain, nearest_distance,activation
         #null_space_velocity,       z_limit更改
         
-        
+    def calculate_joint_position_velocity_bounds(self, q, dt):
+        """根据关节位置限制和关节速度限制，计算当前时刻允许的关节速度上下界。"""
+
+        q_min = np.full(3, -math.pi)
+        q_max = np.full(3, math.pi)
+        q_dot_max = np.full(3, 0.05)
+        # 原始关节速度限制  
+        # -q_dot_max <= q_dot <= q_dot_max
+        lower_velocity = -q_dot_max
+        upper_velocity = q_dot_max
+        # 位置限制转换成速度限制
+        # q_next = q + q_dot * dt
+        # q_min <= q_next <= q_max
+        # 得：
+        # (q_min - q)/dt <= q_dot <= (q_max - q)/dt
+        lower_position = (
+            q_min - q
+        ) / dt
+        upper_position = (
+            q_max - q
+        ) / dt
+        # 合并位置限制和速度限制
+        # 下界取更大的值
+        # 上界取更小的值
+        # 即取两个约束区间的交集
+        lower_bound = np.maximum(
+            lower_velocity,
+            lower_position
+        )
+        upper_bound = np.minimum(
+            upper_velocity,
+            upper_position
+        )
+        return lower_bound, upper_bound,q_max,upper_position    
+
+    def calculate_joint_velocity_damper_bounds(self, q):
+        """根据距离关节限位的距离，计算速度阻尼器速度边界。"""
+        q_min = np.full(3, -math.pi)
+        q_max = np.full(3,  math.pi)
+        #原始的最大关节速度
+        q_dot_max = np.full(3, 0.05)
+        # -----------------------------------------
+        # Velocity Damper  速度阻尼器      参数
+        #
+        # d_safe:  安全距离
+        # 距离限位小于该值时开始减速
+        #
+        # eta: η 阻尼器 最大允许速度
+        # 当前设成与 q_dot_max 相同
+        # -----------------------------------------
+        d_safe = 0.5
+        eta = 0.05
+        lower_bound = -q_dot_max.copy()
+        upper_bound =  q_dot_max.copy()
+        for i in range(len(q)):
+            # 距离上限
+            d_upper = q_max[i] - q[i]
+            if d_upper < d_safe:
+                upper_bound[i] = min(
+                    upper_bound[i],
+                    eta * d_upper / d_safe
+                )
+            # 距离下限
+            d_lower = q[i] - q_min[i]
+            if d_lower < d_safe:
+                lower_bound[i] = max(
+                    lower_bound[i],
+                    -eta * d_lower / d_safe
+                )
+        return lower_bound, upper_bound
 
     def joint_state_callback(self, msg):
         """Update kinematics from the latest three-joint state."""
@@ -422,15 +491,67 @@ class KinematicsMonitor(Node):
         #
         # 与直接clip不同：
         # lsq_linear会在速度限制范围内重新寻找
-        # 任务空间误差尽可能小的关节速度。
+        # 任务空间误差尽可能小的关节速度。.
+
+
+        ##取交集后的上下界
+        # ==========================================
+        #  位置硬约束 + 原始速度约束
+        # ==========================================
+        lower_hard, upper_hard,q_max, upper_position = (
+            self.calculate_joint_position_velocity_bounds(
+                q,
+                0.01
+            )
+        )
+        # ==========================================
+        #  Velocity Damper 速度阻尼器约束
+        # ==========================================
+        lower_damper, upper_damper = (
+            self.calculate_joint_velocity_damper_bounds(
+                q
+            )
+        )
+        # ==========================================
+        # 两套约束取交集
+        # 下界取较大值
+        # 上界取较小值
+        # ==========================================
+        lower_bound = np.maximum(
+            lower_hard,
+            lower_damper
+        )
+        upper_bound = np.minimum(
+            upper_hard,
+            upper_damper
+        )
+
+        # ==========================================
+        # 测试：位置限制是否真正生效
+        # ==========================================
+
+        # 不修改真实关节位置 q
+        q_test = q.copy()
+
+        # 人为让第三关节非常接近上限
+        # q3 = pi - 0.0001 rad
+        q_test[2] = math.pi - 0.0001
+
+        lower_test, upper_test, q_max_test, upper_position_test = (
+            self.calculate_joint_position_velocity_bounds(
+                q_test,
+                0.01
+            )
+        )
+
         result = lsq_linear(
             jacobian,
             desired_velocity,
             bounds=(
-                -q_dot_max,
-                q_dot_max
+                lower_bound,
+                upper_bound
             )
-        )
+        )   
         # 约束最小二乘得到的关节速度
         q_dot_constrained = result.x
         # 实际产生的末端速度
@@ -451,11 +572,36 @@ class KinematicsMonitor(Node):
             I_n,
             -I_n
         ])
+        #将单个速度限制更新为位置限制和速度限制的交集
+        # b = np.concatenate([
+        #     q_dot_max,
+        #     q_dot_max
+        # ])
+
         b = np.concatenate([
-            q_dot_max,
-            q_dot_max
+            upper_bound,
+            -lower_bound
         ])
+
         Aq = A @ q_dot_constrained
+        # ==========================================
+        # 约束松弛量/约束余量  slack
+        #
+        # slack = b - A*q_dot
+        #
+        # slack > 0  -> 约束未到边界
+        # slack = 0  -> 约束处于激活状态
+        # ==========================================
+        constraint_slack = (
+            b - Aq
+        )
+        # 判断约束是否接近激活
+        active_tolerance = 1e-8
+
+        active_constraints = (
+            np.abs(constraint_slack)
+            < active_tolerance
+        )
 
 
         z_limit,secondary_gain,distance_to_limit, activation = (
@@ -791,13 +937,14 @@ class KinematicsMonitor(Node):
                 x_dot_2
             )
         )
+
         self.get_logger().info(
             '\n'
             f'Desired Cartesian velocity: {desired_velocity}\n'
             f'MP joint velocity: {q_dot_mp}\n'
             f'MP achieved velocity: {x_dot_mp}\n'
             f'Null-space joint velocity: {q_dot_null}\n'
-            f'Null-space residual: {null_space_residual}\n'
+            f'Null-space 残差: {null_space_residual}\n'
             f'Total joint velocity: {q_dot_total}\n'
             f'Total achieved velocity: {x_dot_total}\n'
             #f'Distance to nearest limit: {distance_to_limit:.6f}\n'    测试
@@ -806,6 +953,7 @@ class KinematicsMonitor(Node):
             f'z_sing: {z_sing}\n'
             f'z_limit: {z_limit}\n'
             f'z_total: {z_total}\n'
+            # region
             #f'Nz_limit:{N_zlimit}\n'
             #f'Nz_sing:{N_zsing}\n'
             #f'\nJ*N_mp:\n{JN_mp}\n'
@@ -823,14 +971,12 @@ class KinematicsMonitor(Node):
             # f'Total achieved velocity A: {x_dot_total_A}\n'
             # f'Secondary leakage norm A: {secondary_leak_A:.10e}\n'
             # f'Task error A: {task_error_A:.10e}\n'
-            # '\n'
             # f'方案 B - DLS + DLS null operator:\n'
             # f'Null velocity B: {q_dot_null_B}\n'
             # f'Null Cartesian leakage B: {x_dot_null_B}\n'
             # f'Total achieved velocity B: {x_dot_total_B}\n'
             # f'Secondary leakage norm B: {secondary_leak_B:.10e}\n'
             # f'Task error B: {task_error_B:.10e}\n'
-            # '\n'
             # f'Pure DLS task error: {task_error_dls:.10e}'
             # f'===== 严格任务分级实验 =====\n'
             # f'二级任务 期望关节三角速度: {x_dot_2_desired}\n'
@@ -885,22 +1031,41 @@ class KinematicsMonitor(Node):
             # f'{np.linalg.norm(J2 @ N2):.10e}'
             # f'Distance: {distance_to_limit}\n'
             # f'Joint limit activation: {activation}\n'
-            '===== 约束逆运动学实验 =====\n'
-            f'MP q_dot: {q_dot_mp_test}\n'
-            f'MP achieved: {x_dot_mp_test}\n'
-            f'MP error: {error_mp:.10e}\n'
-            f'Clip q_dot: {q_dot_clip}\n'
-            f'Clip achieved: {x_dot_clip}\n'
-            f'Clip error: {error_clip:.10e}\n'
-            f'Constrained q_dot: {q_dot_constrained}\n'
-            f'Constrained achieved: {x_dot_constrained}\n'
-            f'Constrained error: {error_constrained:.10e}'
-            '===== 二次规划约束不等式 =====\n'
-            f'A:\n{A}\n'
-            f'b: {b}\n'
-            f'A @ q_dot_constrained: '
-            f'{Aq}\n'
-            f'Aq <= b: {Aq <= b}'
+            # '===== 约束逆运动学实验 =====\n'
+            # f'MP q_dot: {q_dot_mp_test}\n'
+            # f'MP achieved: {x_dot_mp_test}\n'
+            # f'MP error: {error_mp:.10e}\n'
+            # f'Clip q_dot: {q_dot_clip}\n'
+            # f'Clip achieved: {x_dot_clip}\n'
+            # f'Clip error: {error_clip:.10e}\n'
+            # endregion
+             f'Constrained q_dot: {q_dot_constrained}\n'
+             f'Constrained achieved: {x_dot_constrained}\n'
+             f'Constrained error: {error_constrained:.10e}\n'
+            # '===== 二次规划约束不等式 =====\n'
+            # f'A:\n{A}\n'
+            # f'b: {b}\n'
+            # f'A @ q_dot_constrained: '
+            # f'{Aq}\n'
+            # f'Aq <= b: {Aq <= b}'
+            # region '===== 约束激活检测 =====\n'
+            # f'Constraint slack: {constraint_slack}\n'
+            # f'Active constraints: {active_constraints}\n'
+            # '===== 合并位置限制和速度限制 =====\n'
+            # f'下边界: {lower_bound}\n'
+            # f'上边界: {upper_bound}\n'
+            # f'距离上限 q_max-q: {q_max - q}\n'
+            # f'位置产生的上界: {upper_position}\n'  
+            # f'q_test: {q_test}\n'
+            # f'q_max - q_test: {math.pi - q_test[2]}\n'
+            # f'测试上界: {upper_test}\n'    
+            # f'测试下界: {lower_test}\n'    
+            # endregion   
+            f'速度阻尼器上界{upper_damper}\n'
+            f'速度阻尼器下界{lower_damper}\n'
+            '===== 位置速度限制+电机速度限制+关节动态上下界 =====\n'
+            f'下边界: {lower_bound}\n'
+            f'上边界: {upper_bound}\n'  
         )
 
     def print_result(self):
