@@ -1,9 +1,11 @@
 """Monitor planar three-link arm kinematics and velocity mappings."""
 import math
-from scipy.optimize import lsq_linear
-from geometry_msgs.msg import Twist
 import numpy as np
 import rclpy
+import osqp
+import scipy.sparse as sparse
+from scipy.optimize import lsq_linear
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 class KinematicsMonitor(Node):
@@ -22,6 +24,7 @@ class KinematicsMonitor(Node):
         self.previous_time = None
         self.current_q = None
         self.current_J = None
+        self.current_p_ee = None
 
         # 自适应 DLS 参数
         self.sigma_threshold = 0.10
@@ -366,6 +369,10 @@ class KinematicsMonitor(Node):
             + self.L3 * math.sin(theta123)
         )
 
+        #末端位置
+        p_ee = np.array([x,y])
+        self.current_p_ee = p_ee
+
         jacobian = self.calculate_jacobian(q)
         self.current_J = jacobian
         end_effector_velocity = None
@@ -402,6 +409,7 @@ class KinematicsMonitor(Node):
 
         jacobian = self.current_J
         q = self.current_q
+        p_ee = self.current_p_ee
         desired_velocity = np.array([
             msg.linear.x,
             msg.linear.y
@@ -543,7 +551,9 @@ class KinematicsMonitor(Node):
                 0.01
             )
         )
-
+        # ==========================================
+        # 当前 constrained IK
+        # ==========================================
         result = lsq_linear(
             jacobian,
             desired_velocity,
@@ -602,6 +612,160 @@ class KinematicsMonitor(Node):
             np.abs(constraint_slack)
             < active_tolerance
         )
+
+        # ==========================================
+        # 构造标准 QP 的 H 和 f
+        # ==========================================
+
+        H = jacobian.T @ jacobian
+
+        f = (
+            -jacobian.T
+            @ desired_velocity
+        )
+        # ==========================================
+        # 验证最小二乘目标与 QP 目标等价
+        # ==========================================
+
+        # 原始最小二乘目标：
+        #
+        # objective_ls= 1/2 ||J*q_dot - x_dot_des||^2
+        objective_ls = (
+            0.5
+            * np.linalg.norm(
+                jacobian @ q_dot_constrained
+                - desired_velocity
+            ) ** 2
+        )
+
+        # 标准 QP 中与 q_dot 有关的部分：
+        # objective_qp = 1/2 q_dot^T H q_dot + f^T q_dot
+        objective_qp = (
+            0.5
+            * q_dot_constrained.T
+            @ H
+            @ q_dot_constrained
+            + f.T @ q_dot_constrained
+        )
+
+        # 展开最小二乘时被省略的常数项：
+        # constant = 1/2 x_dot_des^T x_dot_des
+        constant_term = (
+            0.5
+            * desired_velocity.T
+            @ desired_velocity
+        )
+
+        # 把常数项加回 QP 目标
+        objective_qp_with_constant = (
+            objective_qp
+            + constant_term
+        )
+    
+        #避障约束
+
+        d_safe = 0.05 #安全距离
+        eta = 1.0     #增益
+        d_influence = 0.20 #影响距离
+        #人造障碍点
+        obstacle_position = np.array([
+            0.95,
+            0.40
+        ])
+        #计算相对量
+        delta_p = (
+            p_ee
+            - obstacle_position
+        )
+        distance = np.linalg.norm(
+            delta_p
+        )
+        #防止除零
+        if distance > 1e-8:
+            n_obs = (
+                delta_p / distance
+            )
+            J_distance = (
+                n_obs.reshape(1, 2)
+                @ jacobian
+            )
+        A_obstacle = (-J_distance)
+        b_obstacle = np.array([eta * (distance - d_safe)])
+        distance_rate_before = (J_distance @ q_dot_constrained)
+        obstacle_lhs_before = (A_obstacle @ q_dot_constrained)
+
+        #一般线性约束 一个约束对应多个关节
+        #与6个约束拼接起来
+        # A_extra = np.array([[1.0, 1.0, 0.0]])
+        # b_extra = np.array([0.02])
+        # A_total = np.vstack([A,A_extra])
+        # b_total = np.concatenate([b,b_extra])
+        # A_total = np.vstack([A,A_obstacle])
+        # b_total = np.concatenate([b,b_obstacle])
+        #增加距离影响
+        A_list = [A]
+        b_list = [b]
+        if distance <= d_influence:
+                A_list.append(A_obstacle)   #列表末尾追加一个元素
+                b_list.append(b_obstacle)
+        A_total = np.vstack(A_list)         #矩阵按行向下拼接，竖直拼接
+        b_total = np.concatenate(b_list)    #一维数组首尾拼接，数组首尾拼接
+
+
+        # ==========================================
+        # 标准 QP with OSQP
+        # ==========================================
+        #OSQP 要求 H A是稀疏矩阵
+        P = sparse.csc_matrix(H)
+
+        # A_qp = sparse.csc_matrix(A)
+        #更改为7*3
+        A_qp = sparse.csc_matrix(A_total)
+        # # 原约束：
+        # # A*q_dot <= b
+        # # 转成 OSQP：
+        # # -inf <= A*q_dot <= b 
+        # qp_lower = np.full(b.shape,-np.inf)
+        # qp_upper = b.copy()         #上界
+        qp_lower = np.full(b_total.shape,-np.inf)
+        qp_upper = b_total.copy() 
+      
+        
+        # 创建 OSQP 求解器
+        solver = osqp.OSQP()
+        solver.setup(
+            P=P,
+            q=f,
+            A=A_qp,
+            l=qp_lower,
+            u=qp_upper,
+            verbose=False,
+            eps_abs=1e-8,
+            eps_rel=1e-8,
+            max_iter=10000,
+            polish=True
+        )
+        # 求解 QP
+        qp_result = solver.solve()
+        q_dot_qp = qp_result.x          #取结果
+        # 验证 OSQP 解
+        x_dot_qp = (jacobian @ q_dot_qp)
+        error_qp = np.linalg.norm(x_dot_qp - desired_velocity)
+        # 验证 OSQP 解是否违反约束
+        Aq_qp = (
+            A_total@ q_dot_qp
+        )
+        constraint_violation = np.maximum(
+            Aq_qp - b_total,
+            0.0
+        )
+        max_constraint_violation = np.max(
+            constraint_violation
+        )
+
+        distance_rate_qp = (J_distance @ q_dot_qp)        
+        obstacle_slack = (b_obstacle- A_obstacle @ q_dot_qp)  
+
 
 
         z_limit,secondary_gain,distance_to_limit, activation = (
@@ -897,7 +1061,7 @@ class KinematicsMonitor(Node):
         # task2_N2_residual = np.linalg.norm(    #J2N2  不会破坏二级任务
         #     J2 @ N2
         # )
-        # #增加三级任务 验证任务存在但机器人没有自由度执行任务
+        # #增加三级任务 验证任务存在但机器人没有自由度执行任务  
         # q_dot_task3 = N2 @ z_sing
 
         # ==========================================
@@ -940,13 +1104,13 @@ class KinematicsMonitor(Node):
 
         self.get_logger().info(
             '\n'
-            f'Desired Cartesian velocity: {desired_velocity}\n'
-            f'MP joint velocity: {q_dot_mp}\n'
-            f'MP achieved velocity: {x_dot_mp}\n'
-            f'Null-space joint velocity: {q_dot_null}\n'
-            f'Null-space 残差: {null_space_residual}\n'
-            f'Total joint velocity: {q_dot_total}\n'
-            f'Total achieved velocity: {x_dot_total}\n'
+             f'Desired Cartesian velocity: {desired_velocity}\n'
+            # f'MP joint velocity: {q_dot_mp}\n'
+            # f'MP achieved velocity: {x_dot_mp}\n'
+            # f'Null-space joint velocity: {q_dot_null}\n'
+            # f'Null-space 残差: {null_space_residual}\n'
+            # f'Total joint velocity: {q_dot_total}\n'
+            # f'Total achieved velocity: {x_dot_total}\n'
             #f'Distance to nearest limit: {distance_to_limit:.6f}\n'    测试
             #f'Secondary gain: {secondary_gain:.6f}\n'                  测试
             #f'Singularity avoidance velocity: {q_dot_null}\n'          测试
@@ -1043,14 +1207,14 @@ class KinematicsMonitor(Node):
              f'Constrained achieved: {x_dot_constrained}\n'
              f'Constrained error: {error_constrained:.10e}\n'
             # '===== 二次规划约束不等式 =====\n'
-            # f'A:\n{A}\n'
-            # f'b: {b}\n'
-            # f'A @ q_dot_constrained: '
-            # f'{Aq}\n'
+            f'A:\n{A}\n'
+            f'b: {b}\n'
+            f'A @ q_dot_constrained: '
+            f'{Aq}\n'
             # f'Aq <= b: {Aq <= b}'
             # region '===== 约束激活检测 =====\n'
-            # f'Constraint slack: {constraint_slack}\n'
-            # f'Active constraints: {active_constraints}\n'
+            f'Constraint slack: {constraint_slack}\n'   
+            f'Active constraints: {active_constraints}\n'
             # '===== 合并位置限制和速度限制 =====\n'
             # f'下边界: {lower_bound}\n'
             # f'上边界: {upper_bound}\n'
@@ -1061,11 +1225,48 @@ class KinematicsMonitor(Node):
             # f'测试上界: {upper_test}\n'    
             # f'测试下界: {lower_test}\n'    
             # endregion   
-            f'速度阻尼器上界{upper_damper}\n'
-            f'速度阻尼器下界{lower_damper}\n'
-            '===== 位置速度限制+电机速度限制+关节动态上下界 =====\n'
-            f'下边界: {lower_bound}\n'
-            f'上边界: {upper_bound}\n'  
+            # f'速度阻尼器上界{upper_damper}\n'
+            # f'速度阻尼器下界{lower_damper}\n'
+            # '===== 位置速度限制+电机速度限制+关节动态上下界 =====\n'
+            # f'下边界: {lower_bound}\n'
+            # f'上边界: {upper_bound}\n'  
+            # f'H:\n{H}\n'
+            # f'f: {f}\n'
+            # f'H shape: {H.shape}\n'
+            # f'f shape: {f.shape}\n'
+            # '===== LS 与 QP 目标验证 =====\n'
+            # f'最小二乘目标：{objective_ls:.12e}\n'
+            # f'QP 目标：{objective_qp:.12e}\n'
+            # f'常数项：{constant_term:.12e}\n'
+            # f'QP 目标 + 常数项：{objective_qp_with_constant:.12e}\n'
+            # f'QP 目标 - 最小二乘目标：'
+            # f'{objective_qp_with_constant - objective_ls:.12e}\n'
+            # '===== OSQP QP 求解 =====\n'
+            # f'QP状态信息: {qp_result.info.status}\n'
+            # f'OSQP QP关节速度q_dot: {q_dot_qp}\n'
+            # f'q1_dot + q2_dot:{q_dot_qp[0] + q_dot_qp[1]:.10f}\n'
+            # f'OSQP QP末端速度: {x_dot_qp}\n'
+            # f'OSQP QP误差: {error_qp:.10e}\n'
+            # f'OSQP status: {qp_result.info.status}\n'
+            # f'||QP - LSQ||: {np.linalg.norm(q_dot_qp - q_dot_constrained):.10e}'
+            # f'约束左端A @ q_dot_qp: {Aq_qp}\n'
+            # f'约束违反量Constraint violation: {constraint_violation}\n'
+            # f'最大约束违反量Max constraint violation:{max_constraint_violation:.10e}\n'
+            '===== 障碍物距离约束 =====\n'
+            f'End-effector position: {p_ee}\n'
+            f'Obstacle position: {obstacle_position}\n'
+            f'Distance: {distance:.6f}\n'
+            f'n_obs: {n_obs}\n'
+            f'J_distance: {J_distance}\n'
+            f'A_obstacle: {A_obstacle}\n'
+            f'b_obstacle: {b_obstacle}\n'
+            f'QP避障距离变化率: {distance_rate_before}\n'
+            f'最小允许距离变化率：{-b_obstacle}\n'
+            f'避障约束左端实际值: {obstacle_lhs_before}\n'
+            f'b_obs: {b_obstacle}\n'
+            f'QP避障后关节速度 q_dot: {q_dot_qp}\n'
+            f'QP避障后距离变化率 d_dot: {distance_rate_qp}\n'
+            f'避障松弛量 obstacle slack: {obstacle_slack}'
         )
 
     def print_result(self):
