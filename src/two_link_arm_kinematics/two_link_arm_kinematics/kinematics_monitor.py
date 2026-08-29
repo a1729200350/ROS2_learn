@@ -414,94 +414,94 @@ class KinematicsMonitor(Node):
             msg.linear.x,
             msg.linear.y
         ])
+        # region
+        # jacobian_pinv = np.linalg.pinv(jacobian)
+        # q_dot_mp = jacobian_pinv @ desired_velocity
+        # x_dot_mp = jacobian @ q_dot_mp
 
-        jacobian_pinv = np.linalg.pinv(jacobian)
-        q_dot_mp = jacobian_pinv @ desired_velocity
-        x_dot_mp = jacobian @ q_dot_mp
+        # # 关节限位 二级任务
+        # # q_dot_limit, secondary_gain, distance_to_limit = (
+        # #     self.calculate_joint_limit_velocity(
+        # #         q,
+        # #         jacobian,
+        # #         jacobian_pinv
+        # #     )
+        # # )
+        # # ==========================================
+        # # 约束逆运动学 Constrained IK 对比实验
+        # #
+        # # 实验目的：
+        # # 比较以下三种关节速度求解方式：
+        # #
+        # # 1. MP伪逆：
+        # #    q_dot_mp = J^+ * x_dot_des
+        # #
+        # # 2. MP结果直接限幅：
+        # #    q_dot_clip = clip(q_dot_mp)
+        # #
+        # # 3. 带边界约束的线性最小二乘：
+        # #
+        # #    min ||J*q_dot - x_dot_des||^2
+        # #
+        # #    subject to:
+        # #    -q_dot_max <= q_dot <= q_dot_max
+        # #
+        # # ==========================================
 
-        # 关节限位 二级任务
-        # q_dot_limit, secondary_gain, distance_to_limit = (
-        #     self.calculate_joint_limit_velocity(
-        #         q,
-        #         jacobian,
-        #         jacobian_pinv
-        #     )
+
+        # # ------------------------------------------
+        # # 关节速度上下限
+        # #
+        # # 每个关节最大角速度：
+        # # |q_dot_i| <= 0.05 rad/s
+        # # ------------------------------------------
+        # q_dot_max = np.array([
+        #     0.05,
+        #     0.05,
+        #     0.05
+        # ])
+        # # MP无约束解
+        # # 保存MP解作为实验基准
+        # q_dot_mp_test = q_dot_mp.copy()
+        # # MP解实际产生的末端速度
+        # x_dot_mp_test = (
+        #     jacobian @ q_dot_mp_test
         # )
-        # ==========================================
-        # 约束逆运动学 Constrained IK 对比实验
-        #
-        # 实验目的：
-        # 比较以下三种关节速度求解方式：
-        #
-        # 1. MP伪逆：
-        #    q_dot_mp = J^+ * x_dot_des
-        #
-        # 2. MP结果直接限幅：
-        #    q_dot_clip = clip(q_dot_mp)
-        #
-        # 3. 带边界约束的线性最小二乘：
-        #
-        #    min ||J*q_dot - x_dot_des||^2
-        #
-        #    subject to:
-        #    -q_dot_max <= q_dot <= q_dot_max
-        #
-        # ==========================================
+        # # MP任务空间速度误差
+        # error_mp = np.linalg.norm(
+        #     x_dot_mp_test - desired_velocity
+        # )
+        # #MP解直接限幅
+        # # clip只是对已经得到的MP解逐元素截断，并不会重新优化任务空间误差。
+        # q_dot_clip = np.clip(
+        #     q_dot_mp_test,
+        #     -q_dot_max,
+        #     q_dot_max
+        # )
+        # # 限幅后的实际末端速度
+        # x_dot_clip = (
+        #     jacobian @ q_dot_clip
+        # )
+        # error_clip = np.linalg.norm(
+        #     x_dot_clip - desired_velocity
+        # )
+        # # ------------------------------------------
+        # # 边界最小二乘法
+        # # 首次约束逆运动学实验
+        # # ------------------------------------------
+        # # 求解：
+        # #
+        # # min ||J*q_dot - x_dot_des||^2
+        # #
+        # # subject to（受限于）:
+        # #
+        # # -q_dot_max <= q_dot <= q_dot_max
+        # #
+        # # 与直接clip不同：
+        # # lsq_linear会在速度限制范围内重新寻找
+        # # 任务空间误差尽可能小的关节速度。.
 
-
-        # ------------------------------------------
-        # 关节速度上下限
-        #
-        # 每个关节最大角速度：
-        # |q_dot_i| <= 0.05 rad/s
-        # ------------------------------------------
-        q_dot_max = np.array([
-            0.05,
-            0.05,
-            0.05
-        ])
-        # MP无约束解
-        # 保存MP解作为实验基准
-        q_dot_mp_test = q_dot_mp.copy()
-        # MP解实际产生的末端速度
-        x_dot_mp_test = (
-            jacobian @ q_dot_mp_test
-        )
-        # MP任务空间速度误差
-        error_mp = np.linalg.norm(
-            x_dot_mp_test - desired_velocity
-        )
-        #MP解直接限幅
-        # clip只是对已经得到的MP解逐元素截断，并不会重新优化任务空间误差。
-        q_dot_clip = np.clip(
-            q_dot_mp_test,
-            -q_dot_max,
-            q_dot_max
-        )
-        # 限幅后的实际末端速度
-        x_dot_clip = (
-            jacobian @ q_dot_clip
-        )
-        error_clip = np.linalg.norm(
-            x_dot_clip - desired_velocity
-        )
-        # ------------------------------------------
-        # 边界最小二乘法
-        # 首次约束逆运动学实验
-        # ------------------------------------------
-        # 求解：
-        #
-        # min ||J*q_dot - x_dot_des||^2
-        #
-        # subject to（受限于）:
-        #
-        # -q_dot_max <= q_dot <= q_dot_max
-        #
-        # 与直接clip不同：
-        # lsq_linear会在速度限制范围内重新寻找
-        # 任务空间误差尽可能小的关节速度。.
-
-
+        #endregion
         ##取交集后的上下界
         # ==========================================
         #  位置硬约束 + 原始速度约束
@@ -534,45 +534,48 @@ class KinematicsMonitor(Node):
             upper_damper
         )
 
-        # ==========================================
-        # 测试：位置限制是否真正生效
-        # ==========================================
+        #region
+        # # ==========================================
+        # # 测试：位置限制是否真正生效
+        # # ==========================================
 
-        # 不修改真实关节位置 q
-        q_test = q.copy()
+        # # 不修改真实关节位置 q
+        # q_test = q.copy()
 
-        # 人为让第三关节非常接近上限
-        # q3 = pi - 0.0001 rad
-        q_test[2] = math.pi - 0.0001
+        # # 人为让第三关节非常接近上限
+        # # q3 = pi - 0.0001 rad
+        # q_test[2] = math.pi - 0.0001
 
-        lower_test, upper_test, q_max_test, upper_position_test = (
-            self.calculate_joint_position_velocity_bounds(
-                q_test,
-                0.01
-            )
-        )
-        # ==========================================
-        # 当前 constrained IK
-        # ==========================================
-        result = lsq_linear(
-            jacobian,
-            desired_velocity,
-            bounds=(
-                lower_bound,
-                upper_bound
-            )
-        )   
-        # 约束最小二乘得到的关节速度
-        q_dot_constrained = result.x
-        # 实际产生的末端速度
-        x_dot_constrained = (
-            jacobian @ q_dot_constrained
-        )
-        #约束误差
-        error_constrained = np.linalg.norm(
-            x_dot_constrained
-            - desired_velocity
-        )
+        # lower_test, upper_test, q_max_test, upper_position_test = (
+        #     self.calculate_joint_position_velocity_bounds(
+        #         q_test,
+        #         0.01
+        #     )
+        # )
+        # # ==========================================
+        # # 当前 constrained IK
+        # # ==========================================
+        # result = lsq_linear(
+        #     jacobian,
+        #     desired_velocity,
+        #     bounds=(
+        #         lower_bound,
+        #         upper_bound
+        #     )
+        # )   
+        # # 约束最小二乘得到的关节速度
+        # q_dot_constrained = result.x
+        # # 实际产生的末端速度
+        # x_dot_constrained = (
+        #     jacobian @ q_dot_constrained
+        # )
+        # #约束误差
+        # error_constrained = np.linalg.norm(
+        #     x_dot_constrained
+        #     - desired_velocity
+        # )
+        #endregion
+
         # 不等式一般形式:
         # A @ q_dot <= b
         n = jacobian.shape[1]
@@ -593,25 +596,40 @@ class KinematicsMonitor(Node):
             -lower_bound
         ])
 
-        Aq = A @ q_dot_constrained
-        # ==========================================
-        # 约束松弛量/约束余量  slack
-        #
-        # slack = b - A*q_dot
-        #
-        # slack > 0  -> 约束未到边界
-        # slack = 0  -> 约束处于激活状态
-        # ==========================================
-        constraint_slack = (
-            b - Aq
-        )
-        # 判断约束是否接近激活
-        active_tolerance = 1e-8
+        #region
+        # Aq = A @ q_dot_constrained
+        # # ==========================================
+        # # 约束松弛量/约束余量  slack
+        # #
+        # # slack = b - A*q_dot
+        # #
+        # # slack > 0  -> 约束未到边界
+        # # slack = 0  -> 约束处于激活状态
+        # # ==========================================
+        # constraint_slack = (
+        #     b - Aq
+        # )
+        # # 判断约束是否接近激活
+        # active_tolerance = 1e-8
 
-        active_constraints = (
-            np.abs(constraint_slack)
-            < active_tolerance
-        )
+        # active_constraints = (
+        #     np.abs(constraint_slack)
+        #     < active_tolerance
+        # )
+        #endregion
+
+        # ==========================================
+        # QP 不可行性实验
+        # ==========================================
+        # A_conflict = np.array([
+        #     [ 1.0, 0.0, 0.0],
+        #     [-1.0, 0.0, 0.0]
+        # ])
+        # b_conflict = np.array([
+        #     -0.04,
+        #     -0.04
+        # ])
+
 
         # ==========================================
         # 构造标准 QP 的 H 和 f
@@ -623,119 +641,188 @@ class KinematicsMonitor(Node):
             -jacobian.T
             @ desired_velocity
         )
-        # ==========================================
-        # 验证最小二乘目标与 QP 目标等价
-        # ==========================================
 
-        # 原始最小二乘目标：
-        #
-        # objective_ls= 1/2 ||J*q_dot - x_dot_des||^2
-        objective_ls = (
-            0.5
-            * np.linalg.norm(
-                jacobian @ q_dot_constrained
-                - desired_velocity
-            ) ** 2
-        )
+        #region
+        # # ==========================================
+        # # 验证最小二乘目标与 QP 目标等价
+        # # ==========================================
 
-        # 标准 QP 中与 q_dot 有关的部分：
-        # objective_qp = 1/2 q_dot^T H q_dot + f^T q_dot
-        objective_qp = (
-            0.5
-            * q_dot_constrained.T
-            @ H
-            @ q_dot_constrained
-            + f.T @ q_dot_constrained
-        )
+        # # 原始最小二乘目标：
+        # #
+        # # objective_ls= 1/2 ||J*q_dot - x_dot_des||^2
+        # objective_ls = (
+        #     0.5
+        #     * np.linalg.norm(
+        #         jacobian @ q_dot_constrained
+        #         - desired_velocity
+        #     ) ** 2
+        # )
 
-        # 展开最小二乘时被省略的常数项：
-        # constant = 1/2 x_dot_des^T x_dot_des
-        constant_term = (
-            0.5
-            * desired_velocity.T
-            @ desired_velocity
-        )
+        # # 标准 QP 中与 q_dot 有关的部分：
+        # # objective_qp = 1/2 q_dot^T H q_dot + f^T q_dot
+        # objective_qp = (
+        #     0.5
+        #     * q_dot_constrained.T
+        #     @ H
+        #     @ q_dot_constrained
+        #     + f.T @ q_dot_constrained
+        # )
 
-        # 把常数项加回 QP 目标
-        objective_qp_with_constant = (
-            objective_qp
-            + constant_term
-        )
+        # # 展开最小二乘时被省略的常数项：
+        # # constant = 1/2 x_dot_des^T x_dot_des
+        # constant_term = (
+        #     0.5
+        #     * desired_velocity.T
+        #     @ desired_velocity
+        # )
+
+        # # 把常数项加回 QP 目标
+        # objective_qp_with_constant = (
+        #     objective_qp
+        #     + constant_term
+        # )
     
-        #避障约束
+        # #避障约束
 
-        d_safe = 0.05 #安全距离
-        eta = 1.0     #增益
-        d_influence = 0.20 #影响距离
-        #人造障碍点
-        obstacle_position = np.array([
-            0.95,
-            0.40
+        # d_safe = 0.05 #安全距离
+        # eta = 1.0     #增益
+        # d_influence = 0.20 #影响距离
+        # #人造障碍点
+        # obstacle_position = np.array([
+        #     0.95,
+        #     0.40
+        # ])
+        # #计算相对量
+        # delta_p = (
+        #     p_ee
+        #     - obstacle_position
+        # )
+        # distance = np.linalg.norm(
+        #     delta_p
+        # )
+        # #防止除零
+        # if distance > 1e-8:
+        #     n_obs = (
+        #         delta_p / distance
+        #     )
+        #     J_distance = (
+        #         n_obs.reshape(1, 2)
+        #         @ jacobian
+        #     )
+        # A_obstacle = (-J_distance)
+        # b_obstacle = np.array([eta * (distance - d_safe)])
+        # distance_rate_before = (J_distance @ q_dot_constrained)
+        # obstacle_lhs_before = (A_obstacle @ q_dot_constrained)
+
+        # #一般线性约束 一个约束对应多个关节
+        # #与6个约束拼接起来
+        # # A_extra = np.array([[1.0, 1.0, 0.0]])
+        # # b_extra = np.array([0.02])
+        # # A_total = np.vstack([A,A_extra])
+        # # b_total = np.concatenate([b,b_extra])
+        # # A_total = np.vstack([A,A_obstacle])
+        # # b_total = np.concatenate([b,b_obstacle])
+        # #增加距离影响
+        # A_list = [A]
+        # b_list = [b]
+        # if distance <= d_influence:
+        #         A_list.append(A_obstacle)   #列表末尾追加一个元素
+        #         b_list.append(b_obstacle)
+        # A_total = np.vstack(A_list)         #矩阵按行向下拼接，竖直拼接
+        # b_total = np.concatenate(b_list)    #一维数组首尾拼接，数组首尾拼接
+        #endregion
+
+        # A_total = np.vstack([
+        #     A,
+        #     A_conflict
+        # ])
+        # b_total = np.concatenate([
+        #     b,
+        #     b_conflict
+        # ])
+
+        # ==========================================
+        # Slack Variable 实验
+        # 优化变量：
+        # x = [q_dot1, q_dot2, q_dot3, s]
+        # ==========================================
+
+        rho = 1000.0   #slack 松弛变量惩罚权重
+        H_aug = np.zeros((4, 4))
+        H_aug[:3, :3] = H
+        H_aug[3, 3] = rho
+        f_aug = np.zeros(4)
+        f_aug[:3] = f
+        A_hard_base = np.hstack([
+            A,
+            np.zeros((A.shape[0], 1))
         ])
-        #计算相对量
-        delta_p = (
-            p_ee
-            - obstacle_position
-        )
-        distance = np.linalg.norm(
-            delta_p
-        )
-        #防止除零
-        if distance > 1e-8:
-            n_obs = (
-                delta_p / distance
-            )
-            J_distance = (
-                n_obs.reshape(1, 2)
-                @ jacobian
-            )
-        A_obstacle = (-J_distance)
-        b_obstacle = np.array([eta * (distance - d_safe)])
-        distance_rate_before = (J_distance @ q_dot_constrained)
-        obstacle_lhs_before = (A_obstacle @ q_dot_constrained)
+        A_conflict_hard = np.array([
+            [1.0, 0.0, 0.0, 0.0]
+        ])
 
-        #一般线性约束 一个约束对应多个关节
-        #与6个约束拼接起来
-        # A_extra = np.array([[1.0, 1.0, 0.0]])
-        # b_extra = np.array([0.02])
-        # A_total = np.vstack([A,A_extra])
-        # b_total = np.concatenate([b,b_extra])
-        # A_total = np.vstack([A,A_obstacle])
-        # b_total = np.concatenate([b,b_obstacle])
-        #增加距离影响
-        A_list = [A]
-        b_list = [b]
-        if distance <= d_influence:
-                A_list.append(A_obstacle)   #列表末尾追加一个元素
-                b_list.append(b_obstacle)
-        A_total = np.vstack(A_list)         #矩阵按行向下拼接，竖直拼接
-        b_total = np.concatenate(b_list)    #一维数组首尾拼接，数组首尾拼接
+        b_conflict_hard = np.array([
+            -0.04
+        ])
+
+        A_conflict_soft = np.array([
+            [-1.0, 0.0, 0.0, -1.0]
+        ])
+
+        b_conflict_soft = np.array([
+            -0.04
+        ])
+        A_slack_nonnegative = np.array([
+            [0.0, 0.0, 0.0, -1.0]
+        ])
+
+        b_slack_nonnegative = np.array([
+            0.0
+        ])
+        A_aug = np.vstack([
+            A_hard_base,
+            A_conflict_hard,
+            A_conflict_soft,
+            A_slack_nonnegative
+        ])
+        b_aug = np.concatenate([
+            b,
+            b_conflict_hard,
+            b_conflict_soft,
+            b_slack_nonnegative
+        ])
+        # # ==========================================
+        # # 标准 QP with OSQP
+        # # ==========================================
+        # #OSQP 要求 H A是稀疏矩阵
+        # P = sparse.csc_matrix(H)
+        # #A_qp = sparse.csc_matrix(A)
+        # #更改为7*3
+        # A_qp = sparse.csc_matrix(A_total)
+        P = sparse.csc_matrix(H_aug)
+        A_qp = sparse.csc_matrix(A_aug)
 
 
-        # ==========================================
-        # 标准 QP with OSQP
-        # ==========================================
-        #OSQP 要求 H A是稀疏矩阵
-        P = sparse.csc_matrix(H)
-
-        # A_qp = sparse.csc_matrix(A)
-        #更改为7*3
-        A_qp = sparse.csc_matrix(A_total)
         # # 原约束：
         # # A*q_dot <= b
         # # 转成 OSQP：
         # # -inf <= A*q_dot <= b 
         # qp_lower = np.full(b.shape,-np.inf)
-        # qp_upper = b.copy()         #上界
-        qp_lower = np.full(b_total.shape,-np.inf)
-        qp_upper = b_total.copy() 
+        #qp_upper = b.copy()         #上界
+        #qp_upper = b_total.copy() 
+        qp_upper = b_aug.copy() 
+        #qp_lower = np.full(b.shape,-np.inf)
+        #qp_lower = np.full(b_total.shape,-np.inf)
+        qp_lower = np.full(b_aug.shape,-np.inf)
+       
       
         
         # 创建 OSQP 求解器
         solver = osqp.OSQP()
         solver.setup(
             P=P,
-            q=f,
+            #q=f,
+            q=f_aug,
             A=A_qp,
             l=qp_lower,
             u=qp_upper,
@@ -747,365 +834,398 @@ class KinematicsMonitor(Node):
         )
         # 求解 QP
         qp_result = solver.solve()
-        q_dot_qp = qp_result.x          #取结果
-        # 验证 OSQP 解
-        x_dot_qp = (jacobian @ q_dot_qp)
-        error_qp = np.linalg.norm(x_dot_qp - desired_velocity)
-        # 验证 OSQP 解是否违反约束
-        Aq_qp = (
-            A_total@ q_dot_qp
-        )
-        constraint_violation = np.maximum(
-            Aq_qp - b_total,
-            0.0
-        )
-        max_constraint_violation = np.max(
-            constraint_violation
-        )
-
-        distance_rate_qp = (J_distance @ q_dot_qp)        
-        obstacle_slack = (b_obstacle- A_obstacle @ q_dot_qp)  
-
-
-
-        z_limit,secondary_gain,distance_to_limit, activation = (
-            self.calculate_joint_limit(q)
-        )
-        
-
-        # 奇异规避二级任务
-        # q_dot_singularity = (
-        #     self.calculate_singularity_velocity(
-        #         q,
-        #         jacobian,
-        #         jacobian_pinv
+        # q_dot_qp = qp_result.x          #取结果
+        #status: solved error：...   存在合法速度只是末端完成不好
+        #status: primal infeasible  连一个满足所有硬约束的关节速度都不存在
+        status = qp_result.info.status
+        # if status == 'solved':
+        #     q_dot_qp = qp_result.x
+        #     self.get_logger().info(
+        #         f'QP solved: {q_dot_qp}'
         #     )
+        # else:
+        #     self.get_logger().warn(
+        #         f'QP failed: {status}'
+        #     )
+
+        if status == 'solved':
+            x_solution = qp_result.x
+            q_dot_qp = x_solution[:3]
+            slack_var = x_solution[3]
+        else:
+            self.get_logger().warn(f'QP failed: {status}')
+            return
+        #试验指标
+        task_error = np.linalg.norm(
+            jacobian @ q_dot_qp
+            - desired_velocity
+        )
+        slack_cost = (
+            0.5
+            * rho
+            * slack_var ** 2
+        ) 
+        #region
+        # # 验证 OSQP 解
+        # x_dot_qp = (jacobian @ q_dot_qp)
+        # error_qp = np.linalg.norm(x_dot_qp - desired_velocity)
+        # # 验证 OSQP 解是否违反约束
+        # Aq_qp = (
+        #     A_total@ q_dot_qp
+        # )
+        # constraint_violation = np.maximum(
+        #     Aq_qp - b_total,
+        #     0.0
+        # )
+        # max_constraint_violation = np.max(
+        #     constraint_violation
         # )
 
-        # z_sing = k_s ∇w(q)
-        z_sing = self.calculate_singularity(q)
+        # distance_rate_qp = (J_distance @ q_dot_qp)        
+        # obstacle_slack = (b_obstacle- A_obstacle @ q_dot_qp)  
+        #endregion
 
-        #q_dot_null=(q_dot_limit+q_dot_singularity)
-        ###############################################
-        #测试注释行
-        ###############################################
-        #q_dot_null =q_dot_singularity
-
-        ############   二级任务融合    ###############
-        #z_total=z_limit+z_sing 
-        z_total = (z_limit+z_sing)
-        # 零空间投影矩阵
-        # N = I - J+J    
+        #region
+        # z_limit,secondary_gain,distance_to_limit, activation = (
+        #     self.calculate_joint_limit(q)
+        # )
         
-        #N = np.eye(3) - jacobian_pinv @ jacobian
-        #代码模块化 
-        N = (
-            np.eye(jacobian.shape[1])   # jacobian.shape[1] 为关节数 n，用于自动构造 n×n 单位矩阵
-            - jacobian_pinv @ jacobian
-        )
-        # N_zlimit = N @ z_limit
-        # N_zsing = N @ z_sing
-        # 零空间速度
-        #为了区分 数学计算得到的零空间速度  和工程限速后的零空间速度
-        q_dot_null_raw = N @ z_total  #原始数据
-        q_dot_null = q_dot_null_raw.copy()  #复制一份零空间角速度副本供后面限速
-        # 限制零空间最大关节速度
-        max_speed = 1.0
-        max_value = np.max(
-            np.abs(q_dot_null)
-        )
 
-        if max_value > max_speed:
-            q_dot_null *= (
-                max_speed /
-                max_value
-            )
+        # # 奇异规避二级任务
+        # # q_dot_singularity = (
+        # #     self.calculate_singularity_velocity(
+        # #         q,
+        # #         jacobian,
+        # #         jacobian_pinv
+        # #     )
+        # # )
 
-        # 验证两个二级任务合成后的运动是否让 w 增加。
-        # q_next = q + q_dot_null * dt
-        # dt = 0.01
-        # q_test = q + q_dot_null * dt
-        # w_current = self.calculate_manipulability(q)
-        # w_next = self.calculate_manipulability(q_test)
-        # self.get_logger().info(
-        #     f"\nw current = {w_current:.6f}"
-        #     f"\nw next = {w_next:.6f}"
-        # )    
+        # # z_sing = k_s ∇w(q)
+        # z_sing = self.calculate_singularity(q)
 
+        # #q_dot_null=(q_dot_limit+q_dot_singularity)
+        # ###############################################
+        # #测试注释行
+        # ###############################################
+        # #q_dot_null =q_dot_singularity
 
-
-        singular_values = np.linalg.svd(jacobian, compute_uv=False)
-        sigma_min = float(np.min(singular_values))
-        if sigma_min >= self.sigma_threshold:
-            damping_lambda = 0.0
-        else:
-            ratio = 1.0 - sigma_min / self.sigma_threshold
-            damping_lambda = self.lambda_max * ratio ** 2
-
-        if damping_lambda == 0.0:
-            # 非奇异区域：
-            # lambda = 0
-            # DLS退化为Moore-Penrose伪逆
-            jacobian_dls_pinv = jacobian_pinv.copy()
-        else:
-            # lambda^2
-            lambda_sq = damping_lambda ** 2
-            # J J^T + lambda^2 I
-            matrix = (
-                jacobian @ jacobian.T
-                + lambda_sq * np.eye(jacobian.shape[0])
-            )
-            # DLS伪逆
-            # J_dls^# = J^T (J J^T + lambda^2 I)^-1
-            jacobian_dls_pinv = (
-                jacobian.T
-                @ np.linalg.solve(matrix, np.eye(jacobian.shape[0]))
-            )
-        # DLS关节速度    
-        # q_dot_dls = J_dls^+ x_dot_des
-        q_dot_dls= (
-            jacobian_dls_pinv
-            @ desired_velocity
-        )
-        # DLS实际末端速度
-        x_dot_dls = jacobian @ q_dot_dls
-
-        #把mp负责的主空间升级为DLS负责主空间
-        #q_dot_total 更改定义为DLS的主空间 + 零空间
-        #MP以后主要用于：
-        #1.构造严格零空间投影 N；
-        #2.作为实验基准，与DLS比较
-        q_dot_total = q_dot_dls + q_dot_null
-        x_dot_total = jacobian @ q_dot_total
-        null_space_residual = jacobian @ q_dot_null
-
-        # -----------------------------------------
-        # 比较 MP 和 DLS 零空间投影性质
-        # -----------------------------------------
-        # DLS零空间投影矩阵
-        # N_dls = I - J_dls^# J
-        N_dls = (
-            np.eye(jacobian.shape[1])
-            - jacobian_dls_pinv @ jacobian
-        )
-        # 验证 JN 是否接近0
-        JN_mp = jacobian @ N
-        JN_dls = jacobian @ N_dls
-        # 计算矩阵大小
-        JN_mp_norm = np.linalg.norm(JN_mp)
-        JN_dls_norm = np.linalg.norm(JN_dls)
-
-        #验证投影矩阵的幂等性  N^2 = N
-        N_mp_error = np.linalg.norm(
-            N @ N - N
-        )
-
-        N_dls_error = np.linalg.norm(
-            N_dls @ N_dls - N_dls
-        )
-
-        # ==========================================
-        # DLS + Null Space 对比实验
-        # ==========================================
-
-        # 方案 A：
-        # DLS 主任务 + MP 严格零空间
-        q_dot_null_A = N @ z_total
-        q_dot_total_A = (
-            q_dot_dls
-            + q_dot_null_A
-        )
-        x_dot_null_A = (
-            jacobian @ q_dot_null_A
-        )
-        x_dot_total_A = (
-            jacobian @ q_dot_total_A
-        )
-        secondary_leak_A = np.linalg.norm(      #二级任务干扰程度   期望：||J*N_mp*z||≈0        利用欧式范数 把数组里的数压缩成一个数
-            x_dot_null_A
-        )
-
-        # 方案 B：
-        # DLS 主任务 + DLS 软零空间
-        q_dot_null_B = N_dls @ z_total
-
-        q_dot_total_B = (
-            q_dot_dls
-            + q_dot_null_B
-        )
-        x_dot_null_B = (
-            jacobian @ q_dot_null_B
-        )
-        x_dot_total_B = (
-            jacobian @ q_dot_total_B
-        )
-        secondary_leak_B = np.linalg.norm(      #二级任务干扰程度       期望：||J*N_dls*z||>0       
-            x_dot_null_B
-        )
-
-        # ==========================================
-        # 最终末端误差
-        # error = ||x_dot_actual - x_dot_desired||
-        # ==========================================
-        # 只有DLS主任务时的任务误差         #e_DLS=||x_dot_DLS-x_dot_d||
-        task_error_dls = np.linalg.norm(
-            x_dot_dls - desired_velocity
-        )
-
-        # 方案A：
-        # DLS主任务 + MP严格零空间          #e_A=||x_dot_total_A-x_dot_d||
-        #预期 ：e_A=e_DLS
-        task_error_A = np.linalg.norm(
-            x_dot_total_A - desired_velocity
-        )
-
-        # 方案B：
-        # DLS主任务 + DLS软零空间           #e_B=||x_dot_total_B-x_dot_d||
-        #预期 ：e_B！=e_DLS
-        task_error_B = np.linalg.norm(
-            x_dot_total_B - desired_velocity
-        )
-
-        # # ==========================================
-        # # 严格任务优先级实验
-        # # ==========================================
-
-        # #一级任务 
-        # q_dot_task1 = q_dot_mp
-        # N1 = (
-        #     np.eye(jacobian.shape[1])
+        # ############   二级任务融合    ###############
+        # #z_total=z_limit+z_sing 
+        # z_total = (z_limit+z_sing)
+        # # 零空间投影矩阵
+        # # N = I - J+J    
+        
+        # #N = np.eye(3) - jacobian_pinv @ jacobian
+        # #代码模块化 
+        # N = (
+        #     np.eye(jacobian.shape[1])   # jacobian.shape[1] 为关节数 n，用于自动构造 n×n 单位矩阵
         #     - jacobian_pinv @ jacobian
         # )
-        # #二级任务：控制第三关节速度
+        # # N_zlimit = N @ z_limit
+        # # N_zsing = N @ z_sing
+        # # 零空间速度
+        # #为了区分 数学计算得到的零空间速度  和工程限速后的零空间速度
+        # q_dot_null_raw = N @ z_total  #原始数据
+        # q_dot_null = q_dot_null_raw.copy()  #复制一份零空间角速度副本供后面限速
+        # # 限制零空间最大关节速度
+        # max_speed = 1.0
+        # max_value = np.max(
+        #     np.abs(q_dot_null)
+        # )
+
+        # if max_value > max_speed:
+        #     q_dot_null *= (
+        #         max_speed /
+        #         max_value
+        #     )
+
+        # # 验证两个二级任务合成后的运动是否让 w 增加。
+        # # q_next = q + q_dot_null * dt
+        # # dt = 0.01
+        # # q_test = q + q_dot_null * dt
+        # # w_current = self.calculate_manipulability(q)
+        # # w_next = self.calculate_manipulability(q_test)
+        # # self.get_logger().info(
+        # #     f"\nw current = {w_current:.6f}"
+        # #     f"\nw next = {w_next:.6f}"
+        # # )    
+
+
+
+        # singular_values = np.linalg.svd(jacobian, compute_uv=False)
+        # sigma_min = float(np.min(singular_values))
+        # if sigma_min >= self.sigma_threshold:
+        #     damping_lambda = 0.0
+        # else:
+        #     ratio = 1.0 - sigma_min / self.sigma_threshold
+        #     damping_lambda = self.lambda_max * ratio ** 2
+
+        # if damping_lambda == 0.0:
+        #     # 非奇异区域：
+        #     # lambda = 0
+        #     # DLS退化为Moore-Penrose伪逆
+        #     jacobian_dls_pinv = jacobian_pinv.copy()
+        # else:
+        #     # lambda^2
+        #     lambda_sq = damping_lambda ** 2
+        #     # J J^T + lambda^2 I
+        #     matrix = (
+        #         jacobian @ jacobian.T
+        #         + lambda_sq * np.eye(jacobian.shape[0])
+        #     )
+        #     # DLS伪逆
+        #     # J_dls^# = J^T (J J^T + lambda^2 I)^-1
+        #     jacobian_dls_pinv = (
+        #         jacobian.T
+        #         @ np.linalg.solve(matrix, np.eye(jacobian.shape[0]))
+        #     )
+        # # DLS关节速度    
+        # # q_dot_dls = J_dls^+ x_dot_des
+        # q_dot_dls= (
+        #     jacobian_dls_pinv
+        #     @ desired_velocity
+        # )
+        # # DLS实际末端速度
+        # x_dot_dls = jacobian @ q_dot_dls
+
+        # #把mp负责的主空间升级为DLS负责主空间
+        # #q_dot_total 更改定义为DLS的主空间 + 零空间
+        # #MP以后主要用于：
+        # #1.构造严格零空间投影 N；
+        # #2.作为实验基准，与DLS比较
+        # q_dot_total = q_dot_dls + q_dot_null
+        # x_dot_total = jacobian @ q_dot_total
+        # null_space_residual = jacobian @ q_dot_null
+
+        # # -----------------------------------------
+        # # 比较 MP 和 DLS 零空间投影性质
+        # # -----------------------------------------
+        # # DLS零空间投影矩阵
+        # # N_dls = I - J_dls^# J
+        # N_dls = (
+        #     np.eye(jacobian.shape[1])
+        #     - jacobian_dls_pinv @ jacobian
+        # )
+        # # 验证 JN 是否接近0
+        # JN_mp = jacobian @ N
+        # JN_dls = jacobian @ N_dls
+        # # 计算矩阵大小
+        # JN_mp_norm = np.linalg.norm(JN_mp)
+        # JN_dls_norm = np.linalg.norm(JN_dls)
+
+        # #验证投影矩阵的幂等性  N^2 = N
+        # N_mp_error = np.linalg.norm(
+        #     N @ N - N
+        # )
+
+        # N_dls_error = np.linalg.norm(
+        #     N_dls @ N_dls - N_dls
+        # )
+
+        # # ==========================================
+        # # DLS + Null Space 对比实验
+        # # ==========================================
+
+        # # 方案 A：
+        # # DLS 主任务 + MP 严格零空间
+        # q_dot_null_A = N @ z_total
+        # q_dot_total_A = (
+        #     q_dot_dls
+        #     + q_dot_null_A
+        # )
+        # x_dot_null_A = (
+        #     jacobian @ q_dot_null_A
+        # )
+        # x_dot_total_A = (
+        #     jacobian @ q_dot_total_A
+        # )
+        # secondary_leak_A = np.linalg.norm(      #二级任务干扰程度   期望：||J*N_mp*z||≈0        利用欧式范数 把数组里的数压缩成一个数
+        #     x_dot_null_A
+        # )
+
+        # # 方案 B：
+        # # DLS 主任务 + DLS 软零空间
+        # q_dot_null_B = N_dls @ z_total
+
+        # q_dot_total_B = (
+        #     q_dot_dls
+        #     + q_dot_null_B
+        # )
+        # x_dot_null_B = (
+        #     jacobian @ q_dot_null_B
+        # )
+        # x_dot_total_B = (
+        #     jacobian @ q_dot_total_B
+        # )
+        # secondary_leak_B = np.linalg.norm(      #二级任务干扰程度       期望：||J*N_dls*z||>0       
+        #     x_dot_null_B
+        # )
+
+        # # ==========================================
+        # # 最终末端误差
+        # # error = ||x_dot_actual - x_dot_desired||
+        # # ==========================================
+        # # 只有DLS主任务时的任务误差         #e_DLS=||x_dot_DLS-x_dot_d||
+        # task_error_dls = np.linalg.norm(
+        #     x_dot_dls - desired_velocity
+        # )
+
+        # # 方案A：
+        # # DLS主任务 + MP严格零空间          #e_A=||x_dot_total_A-x_dot_d||
+        # #预期 ：e_A=e_DLS
+        # task_error_A = np.linalg.norm(
+        #     x_dot_total_A - desired_velocity
+        # )
+
+        # # 方案B：
+        # # DLS主任务 + DLS软零空间           #e_B=||x_dot_total_B-x_dot_d||
+        # #预期 ：e_B！=e_DLS
+        # task_error_B = np.linalg.norm(
+        #     x_dot_total_B - desired_velocity
+        # )
+
+        # # # ==========================================
+        # # # 严格任务优先级实验
+        # # # ==========================================
+
+        # # #一级任务 
+        # # q_dot_task1 = q_dot_mp
+        # # N1 = (
+        # #     np.eye(jacobian.shape[1])
+        # #     - jacobian_pinv @ jacobian
+        # # )
+        # # #二级任务：控制第三关节速度
+        # # J2 = np.array([
+        # #     [0.0, 1.0, 0.0],
+        # #     [0.0, 0.0, 1.0]
+        # # ])
+        # # x_dot_2_desired = np.array([
+        # #     0.2,    # q2_dot
+        # #     -0.2     # q3_dot
+        # # ])
+        # # #计算残差 r    r2 = x_dot_2-J_2*q_dot_1
+        # # secondary_residual = (
+        # #     x_dot_2_desired
+        # #     - J2 @ q_dot_task1
+        # # )
+        # # #错误实验   直接使用 J2 的伪逆求解二级任务，再通过 N1 投影
+        # # #预测 结论  一级任务不被破坏 二级任务未达成   
+        # # y_wrong = (
+        # #     np.linalg.pinv(J2)
+        # #     @ secondary_residual
+        # # )
+        # # q_dot_task2_wrong = (
+        # #     N1 @ y_wrong
+        # # )
+        # # q_dot_total_wrong = (
+        # #     q_dot_task1
+        # #     + q_dot_task2_wrong
+        # # )
+        # # task1_wrong = (
+        # #     jacobian @ q_dot_total_wrong
+        # # )
+        # # task2_wrong = (
+        # #     J2 @ q_dot_total_wrong
+        # # )
+
+        # # #正确方法
+        # # #一级任务后真正可以使用雅可比
+        # # J2_projected = J2 @ N1
+        # # #解J_2*N_1*y=r_2
+        # # y_task2 = (
+        # #     np.linalg.pinv(J2_projected)
+        # #     @ secondary_residual
+        # # )
+        # # #二级修正
+        # # q_dot_task2_correct = (
+        # #     N1 @ y_task2
+        # # )
+        # # #正确的关节总速度
+        # # q_dot_total_task2 = (
+        # #     q_dot_task1
+        # #     + q_dot_task2_correct
+        # # )
+        # # task1_correct = (
+        # #     jacobian @ q_dot_total_task2
+        # # )
+        # # task2_achieved = (
+        # #     J2 @ q_dot_total_task2
+        # # )
+        # # task2_error = (
+        # #     x_dot_2_desired
+        # #     - task2_achieved
+        # # )
+        # # task2_error_norm = np.linalg.norm(
+        # #     task2_error
+        # # )
+
+        # # # ==========================================
+        # # # Task 1 + Task 2 完成后的剩余零空间
+        # # # ==========================================
+        # # #J2^——伪逆
+        # # J2_projected_pinv = np.linalg.pinv(
+        # #     J2_projected
+        # # )
+        # # #N2 =N1-J2^——伪逆*J2^——  剩余部分N2=一级剩余空间-二级占用空间  同时不影响 Task 1 和 Task 2 的所有关节运动。
+        # # N2 = (
+        # #     N1
+        # #     - J2_projected_pinv @ J2_projected
+        # # )
+        # # N2_norm = np.linalg.norm(N2)  #对N2 求范数  证明已经无自由度
+
+        # # task1_N2_residual = np.linalg.norm(    #J1N2  不会破坏一级任务
+        # #     jacobian @ N2
+        # # )
+        # # task2_N2_residual = np.linalg.norm(    #J2N2  不会破坏二级任务
+        # #     J2 @ N2
+        # # )
+        # # #增加三级任务 验证任务存在但机器人没有自由度执行任务  
+        # # q_dot_task3 = N2 @ z_sing
+
+        # # ==========================================
+        # # 严格任务优先级递归实验
+        # # ==========================================
+        # # 初始化
+        # # q_dot_0 = 0     N0 = I
+        # q_dot_0 = np.zeros(
+        #     jacobian.shape[1]
+        # )
+        # N0 = np.eye(
+        #     jacobian.shape[1]
+        # )
+        # # 一级任务
+        # # J1 * q_dot = x_dot_1
+        # J1 = jacobian
+        # x_dot_1 = desired_velocity
+        # q_dot_1, N1, r1, J1_bar = (
+        #     self.apply_priority_task(
+        #         q_dot_0,
+        #         N0,
+        #         J1,
+        #         x_dot_1
+        #     )
+        # )
+        # # 二级任务
+        # # 控制第三关节角速度  q_dot_3 = -0.2 rad/s
         # J2 = np.array([
-        #     [0.0, 1.0, 0.0],
         #     [0.0, 0.0, 1.0]
         # ])
-        # x_dot_2_desired = np.array([
-        #     0.2,    # q2_dot
-        #     -0.2     # q3_dot
-        # ])
-        # #计算残差 r    r2 = x_dot_2-J_2*q_dot_1
-        # secondary_residual = (
-        #     x_dot_2_desired
-        #     - J2 @ q_dot_task1
+        # x_dot_2 = np.array([-0.2])
+        # q_dot_2, N2, r2, J2_bar = (
+        #     self.apply_priority_task(
+        #         q_dot_1,
+        #         N1,
+        #         J2,
+        #         x_dot_2
+        #     )
         # )
-        # #错误实验   直接使用 J2 的伪逆求解二级任务，再通过 N1 投影
-        # #预测 结论  一级任务不被破坏 二级任务未达成   
-        # y_wrong = (
-        #     np.linalg.pinv(J2)
-        #     @ secondary_residual
-        # )
-        # q_dot_task2_wrong = (
-        #     N1 @ y_wrong
-        # )
-        # q_dot_total_wrong = (
-        #     q_dot_task1
-        #     + q_dot_task2_wrong
-        # )
-        # task1_wrong = (
-        #     jacobian @ q_dot_total_wrong
-        # )
-        # task2_wrong = (
-        #     J2 @ q_dot_total_wrong
-        # )
-
-        # #正确方法
-        # #一级任务后真正可以使用雅可比
-        # J2_projected = J2 @ N1
-        # #解J_2*N_1*y=r_2
-        # y_task2 = (
-        #     np.linalg.pinv(J2_projected)
-        #     @ secondary_residual
-        # )
-        # #二级修正
-        # q_dot_task2_correct = (
-        #     N1 @ y_task2
-        # )
-        # #正确的关节总速度
-        # q_dot_total_task2 = (
-        #     q_dot_task1
-        #     + q_dot_task2_correct
-        # )
-        # task1_correct = (
-        #     jacobian @ q_dot_total_task2
-        # )
-        # task2_achieved = (
-        #     J2 @ q_dot_total_task2
-        # )
-        # task2_error = (
-        #     x_dot_2_desired
-        #     - task2_achieved
-        # )
-        # task2_error_norm = np.linalg.norm(
-        #     task2_error
-        # )
-
-        # # ==========================================
-        # # Task 1 + Task 2 完成后的剩余零空间
-        # # ==========================================
-        # #J2^——伪逆
-        # J2_projected_pinv = np.linalg.pinv(
-        #     J2_projected
-        # )
-        # #N2 =N1-J2^——伪逆*J2^——  剩余部分N2=一级剩余空间-二级占用空间  同时不影响 Task 1 和 Task 2 的所有关节运动。
-        # N2 = (
-        #     N1
-        #     - J2_projected_pinv @ J2_projected
-        # )
-        # N2_norm = np.linalg.norm(N2)  #对N2 求范数  证明已经无自由度
-
-        # task1_N2_residual = np.linalg.norm(    #J1N2  不会破坏一级任务
-        #     jacobian @ N2
-        # )
-        # task2_N2_residual = np.linalg.norm(    #J2N2  不会破坏二级任务
-        #     J2 @ N2
-        # )
-        # #增加三级任务 验证任务存在但机器人没有自由度执行任务  
-        # q_dot_task3 = N2 @ z_sing
-
-        # ==========================================
-        # 严格任务优先级递归实验
-        # ==========================================
-        # 初始化
-        # q_dot_0 = 0     N0 = I
-        q_dot_0 = np.zeros(
-            jacobian.shape[1]
-        )
-        N0 = np.eye(
-            jacobian.shape[1]
-        )
-        # 一级任务
-        # J1 * q_dot = x_dot_1
-        J1 = jacobian
-        x_dot_1 = desired_velocity
-        q_dot_1, N1, r1, J1_bar = (
-            self.apply_priority_task(
-                q_dot_0,
-                N0,
-                J1,
-                x_dot_1
-            )
-        )
-        # 二级任务
-        # 控制第三关节角速度  q_dot_3 = -0.2 rad/s
-        J2 = np.array([
-            [0.0, 0.0, 1.0]
-        ])
-        x_dot_2 = np.array([-0.2])
-        q_dot_2, N2, r2, J2_bar = (
-            self.apply_priority_task(
-                q_dot_1,
-                N1,
-                J2,
-                x_dot_2
-            )
-        )
-
-        self.get_logger().info(
-            '\n'
-             f'Desired Cartesian velocity: {desired_velocity}\n'
-            # f'MP joint velocity: {q_dot_mp}\n'
+        #endregion
+        #大打印
+        #region
+        #self.get_logger().info(
+            #'\n'
+            #f'Desired Cartesian velocity: {desired_velocity}\n'
+            # # f'MP joint velocity: {q_dot_mp}\n'
             # f'MP achieved velocity: {x_dot_mp}\n'
             # f'Null-space joint velocity: {q_dot_null}\n'
             # f'Null-space 残差: {null_space_residual}\n'
@@ -1114,10 +1234,9 @@ class KinematicsMonitor(Node):
             #f'Distance to nearest limit: {distance_to_limit:.6f}\n'    测试
             #f'Secondary gain: {secondary_gain:.6f}\n'                  测试
             #f'Singularity avoidance velocity: {q_dot_null}\n'          测试
-            f'z_sing: {z_sing}\n'
-            f'z_limit: {z_limit}\n'
-            f'z_total: {z_total}\n'
-            # region
+            # f'z_sing: {z_sing}\n'
+            # f'z_limit: {z_limit}\n'
+            # f'z_total: {z_total}\n'
             #f'Nz_limit:{N_zlimit}\n'
             #f'Nz_sing:{N_zsing}\n'
             #f'\nJ*N_mp:\n{JN_mp}\n'
@@ -1202,19 +1321,18 @@ class KinematicsMonitor(Node):
             # f'Clip q_dot: {q_dot_clip}\n'
             # f'Clip achieved: {x_dot_clip}\n'
             # f'Clip error: {error_clip:.10e}\n'
-            # endregion
-             f'Constrained q_dot: {q_dot_constrained}\n'
-             f'Constrained achieved: {x_dot_constrained}\n'
-             f'Constrained error: {error_constrained:.10e}\n'
+            #  f'Constrained q_dot: {q_dot_constrained}\n'
+            #  f'Constrained achieved: {x_dot_constrained}\n'
+            #  f'Constrained error: {error_constrained:.10e}\n'
             # '===== 二次规划约束不等式 =====\n'
-            f'A:\n{A}\n'
-            f'b: {b}\n'
-            f'A @ q_dot_constrained: '
-            f'{Aq}\n'
+            # f'A:\n{A}\n'
+            # f'b: {b}\n'
+            # f'A @ q_dot_constrained: '
+            # f'{Aq}\n'
             # f'Aq <= b: {Aq <= b}'
-            # region '===== 约束激活检测 =====\n'
-            f'Constraint slack: {constraint_slack}\n'   
-            f'Active constraints: {active_constraints}\n'
+            # '===== 约束激活检测 =====\n'
+            # f'Constraint slack: {constraint_slack}\n'   
+            # f'Active constraints: {active_constraints}\n'
             # '===== 合并位置限制和速度限制 =====\n'
             # f'下边界: {lower_bound}\n'
             # f'上边界: {upper_bound}\n'
@@ -1224,7 +1342,6 @@ class KinematicsMonitor(Node):
             # f'q_max - q_test: {math.pi - q_test[2]}\n'
             # f'测试上界: {upper_test}\n'    
             # f'测试下界: {lower_test}\n'    
-            # endregion   
             # f'速度阻尼器上界{upper_damper}\n'
             # f'速度阻尼器下界{lower_damper}\n'
             # '===== 位置速度限制+电机速度限制+关节动态上下界 =====\n'
@@ -1242,32 +1359,59 @@ class KinematicsMonitor(Node):
             # f'QP 目标 - 最小二乘目标：'
             # f'{objective_qp_with_constant - objective_ls:.12e}\n'
             # '===== OSQP QP 求解 =====\n'
-            # f'QP状态信息: {qp_result.info.status}\n'
+            #f'QP状态信息: {qp_result.info.status}\n'
             # f'OSQP QP关节速度q_dot: {q_dot_qp}\n'
             # f'q1_dot + q2_dot:{q_dot_qp[0] + q_dot_qp[1]:.10f}\n'
             # f'OSQP QP末端速度: {x_dot_qp}\n'
             # f'OSQP QP误差: {error_qp:.10e}\n'
-            # f'OSQP status: {qp_result.info.status}\n'
             # f'||QP - LSQ||: {np.linalg.norm(q_dot_qp - q_dot_constrained):.10e}'
             # f'约束左端A @ q_dot_qp: {Aq_qp}\n'
             # f'约束违反量Constraint violation: {constraint_violation}\n'
             # f'最大约束违反量Max constraint violation:{max_constraint_violation:.10e}\n'
-            '===== 障碍物距离约束 =====\n'
-            f'End-effector position: {p_ee}\n'
-            f'Obstacle position: {obstacle_position}\n'
-            f'Distance: {distance:.6f}\n'
-            f'n_obs: {n_obs}\n'
-            f'J_distance: {J_distance}\n'
-            f'A_obstacle: {A_obstacle}\n'
-            f'b_obstacle: {b_obstacle}\n'
-            f'QP避障距离变化率: {distance_rate_before}\n'
-            f'最小允许距离变化率：{-b_obstacle}\n'
-            f'避障约束左端实际值: {obstacle_lhs_before}\n'
-            f'b_obs: {b_obstacle}\n'
-            f'QP避障后关节速度 q_dot: {q_dot_qp}\n'
-            f'QP避障后距离变化率 d_dot: {distance_rate_qp}\n'
-            f'避障松弛量 obstacle slack: {obstacle_slack}'
+            # '===== 障碍物距离约束 =====\n'
+            # f'End-effector position: {p_ee}\n'
+            # f'Obstacle position: {obstacle_position}\n'
+            # f'Distance: {distance:.6f}\n'
+            # f'n_obs: {n_obs}\n'
+            # f'J_distance: {J_distance}\n'
+            # f'A_obstacle: {A_obstacle}\n'
+            # f'b_obstacle: {b_obstacle}\n'
+            # f'QP避障距离变化率: {distance_rate_before}\n'
+            # f'最小允许距离变化率：{-b_obstacle}\n'
+            # f'避障约束左端实际值: {obstacle_lhs_before}\n'
+            # f'b_obs: {b_obstacle}\n'
+            # f'QP避障后关节速度 q_dot: {q_dot_qp}\n'
+            # f'QP避障后距离变化率 d_dot: {distance_rate_qp}\n'
+            # f'避障松弛量 obstacle slack: {obstacle_slack}'
+        #)
+        #endregion
+        #松弛变量软约束实验
+        #region
+        # self.get_logger().info(
+        #     '\n'
+        #     '===== Slack Variable 实验 =====\n'
+        #     f'QP 状态: {status}\n'
+        #     f'关节速度 q_dot: {q_dot_qp}\n'
+        #     f'松弛变量 slack variable s: {slack_var:.10f}\n'
+        #     f'硬约束 q1_dot <= -0.04: '
+        #     f'{q_dot_qp[0]:.10f}\n'
+        #     f'软约束关节速度期望 q1_dot >= 0.04\n'
+        #     f'Soft constraint violation: '
+        #     f'{max(0.04 - q_dot_qp[0], 0.0):.10f}'
+        # )
+        #endregion
+        #松弛量惩罚实验
+        #region
+        self.get_logger().info(
+            '\n'
+            '===== Slack Penalty 实验 =====\n'
+            f'rho: {rho}\n'
+            f'q_dot: {q_dot_qp}\n'
+            f'slack s: {slack_var:.10f}\n'
+            f'Task error: {task_error:.10e}\n'
+            f'Slack cost: {slack_cost:.10e}'
         )
+        #endregion
 
     def print_result(self):
         """Print the most recently calculated kinematic state."""
