@@ -66,7 +66,15 @@ class KinematicsMonitor(Node):
         )
 
         self.get_logger().info('Kinematics monitor started.')
-
+        # 实验：三次轨迹最短时间与轨迹采样
+        # self.experiment_cubic_trajectory_duration()
+        # 实验：五次轨迹最短时间与轨迹采样
+        # self.experiment_quintic_trajectory_duration()
+        # 实验：梯形速度轨迹和三角速度轨迹
+        # self.experiment_trapezoidal_profile()
+        # 实验：多关节时间同步
+        self.experiment_multi_joint_profile()
+    
     def calculate_jacobian(self, q):
         """Return the planar translational Jacobian for joint vector q."""
         theta1, theta2, theta3 = q
@@ -548,7 +556,7 @@ class KinematicsMonitor(Node):
         # margin < 0 ：约束被违反
         constraint_margin = (b_aug- A_aug @ x_solution)
         active_constraints = (np.abs(constraint_margin)< self.active_tolerance )
-        # KKT - Stationarity 驻点条件
+        # TTK - Stationarity 驻点条件
         # H*x + f + A^T*y = 0
         stationarity_residual = (
             H_aug @ x_solution
@@ -558,7 +566,7 @@ class KinematicsMonitor(Node):
         stationarity_error = np.linalg.norm(
             stationarity_residual
         )
-        # KKT - Complementarity 互补松弛
+        # TTK - Complementarity 互补松弛
         # y_i * (b_i - A_i*x) = 0
         complementarity = (
             dual_variables
@@ -672,6 +680,552 @@ class KinematicsMonitor(Node):
             f"complementarity error: "
             f"{check['complementarity_error']:.10e}"
         )
+
+    def calculate_cubic_trajectory_duration(self,q_start,q_goal,max_velocity,max_acceleration):
+        """根据速度和加速度限制计算三次轨迹最短时间。"""
+        # 每个关节需要运动的角度
+        delta_q = (q_goal- q_start)
+        # 速度限制产生的最短时间
+        # |q_dot_i|max = 1.5 * |delta_q_i| / T
+        # 所以：
+        # T >= 1.5 * |delta_q_i| / q_dot_max_i
+        time_from_velocity = (
+            1.5
+            * np.abs(delta_q)
+            / max_velocity
+        )
+        # 加速度限制产生的最短时间
+        # |q_ddot_i|max = 6 * |delta_q_i| / T^2
+        # 所以：
+        # T >= sqrt(6 * |delta_q_i|/ q_ddot_max_i)
+        time_from_acceleration = np.sqrt(
+            6.0
+            * np.abs(delta_q)
+            / max_acceleration
+        )
+        # 每个关节分别取：max(速度要求时间, 加速度要求时间)
+        time_per_joint = np.maximum(
+            time_from_velocity,
+            time_from_acceleration
+        )
+        # 三个关节必须同时完成，因此整个轨迹取最慢关节需要的时间
+        duration = float(np.max(time_per_joint))
+        return {
+            'duration': duration,
+            'delta_q': delta_q,
+            'time_from_velocity':
+                time_from_velocity,
+            'time_from_acceleration':
+                time_from_acceleration,
+            'time_per_joint':
+                time_per_joint
+        }
+
+    def sample_cubic_trajectory(self,q_start,q_goal,duration,t):
+        """计算三次轨迹在时刻 t 的位置、速度和加速度。"""
+        #检查轨迹总时间  T>0
+        if duration <= 0.0:
+            raise ValueError(
+                '轨迹持续时间必须为正值.'
+            )
+        # 防止查询时间跑出轨迹范围  将查询时间t限制在（0~T）  0<=t<=T 
+        t_clamped = float(
+            np.clip(
+                t,
+                0.0,
+                duration
+            )
+        )
+        # 归一化时间
+        # tau ∈ [0, 1]
+        tau = (
+            t_clamped
+            / duration
+        )
+        # 关节总位移
+        delta_q = (
+            q_goal
+            - q_start
+        )
+        # 三次插值函数/缩放函数
+        # h(tau) = 3*tau^2 - 2*tau^3
+        h = (
+            3.0 * tau ** 2
+            - 2.0 * tau ** 3
+        )
+        # h 对实际时间 t 的一阶导数
+        # dh/dt =(6*tau - 6*tau^2) / T
+        h_dot = (
+            (
+                6.0 * tau
+                - 6.0 * tau ** 2
+            )
+            / duration
+        )
+        # h 对实际时间 t 的二阶导数
+        # d2h/dt2 = (6 - 12*tau) / T^2
+        h_ddot = (
+            (
+                6.0
+                - 12.0 * tau
+            )
+            / duration ** 2
+        )
+        # 位置
+        q = (q_start+ h * delta_q)
+        # 速度
+        q_dot = (h_dot * delta_q)
+        # 加速度
+        q_ddot = (h_ddot * delta_q)
+        return {
+            't': t_clamped,
+            'tau': tau,
+            'q': q,
+            'q_dot': q_dot,
+            'q_ddot': q_ddot
+        }
+
+    def calculate_quintic_trajectory_duration(self,q_start,q_goal,max_velocity,max_acceleration):
+        """根据速度和加速度限制计算五次轨迹最短时间。"""
+        delta_q = (q_goal - q_start)
+        # 五次轨迹最大速度
+        # |q_dot|max = 1.875 * |delta_q| / T
+        # 所以： T >= 1.875 * |delta_q| / max_velocity
+        time_from_velocity = (
+            1.875
+            * np.abs(delta_q)
+            / max_velocity
+        )
+        # 五次轨迹最大加速度
+        # |q_ddot|max = (10*sqrt(3)/3) * |delta_q| / T^2
+        acceleration_coefficient = (
+            10.0
+            * np.sqrt(3.0)
+            / 3.0
+        )
+        time_from_acceleration = np.sqrt(
+            acceleration_coefficient
+            * np.abs(delta_q)
+            / max_acceleration
+        )
+        time_per_joint = np.maximum(
+            time_from_velocity,
+            time_from_acceleration
+        )
+        duration = float(np.max(time_per_joint))
+        return {
+            'duration': duration,
+            'delta_q': delta_q,
+            'time_from_velocity':
+                time_from_velocity,
+            'time_from_acceleration':
+                time_from_acceleration,
+            'time_per_joint':
+                time_per_joint
+        }
+
+    def sample_quintic_trajectory(self,q_start,q_goal,duration,t):
+        """计算五次轨迹在时刻 t 的位置、速度和加速度。"""
+        #检查轨迹总时间  T>0
+        if duration <= 0.0:
+            raise ValueError(
+                '轨迹持续时间必须为正值.'
+            )
+        # 防止查询时间跑出轨迹范围  将查询时间t限制在（0~T）  0<=t<=T 
+        t_clamped = float(
+            np.clip(
+                t,
+                0.0,
+                duration
+            )
+        )
+        # 归一化时间
+        # tau ∈ [0, 1]
+        tau = (
+            t_clamped
+            / duration
+        )
+        # 关节总位移
+        delta_q = (
+            q_goal
+            - q_start
+        )
+        # 五次插值函数/缩放函数
+        # h(tau) = 10*tau^3 - 15*tau^4 + 6*tau^5
+        h = (
+            10.0 * tau ** 3
+            - 15.0 * tau ** 4
+            + 6.0 * tau ** 5
+        )
+        # h 对实际时间 t 的一阶导数
+        h_dot = (
+            (
+                30.0 * tau ** 2
+                - 60.0 * tau ** 3
+                +30.0 * tau ** 4
+            )
+            / duration
+        )
+        # h 对实际时间 t 的二阶导数
+        h_ddot = (
+            (
+                60.0 * tau
+                - 180.0 * tau ** 2
+                + 120.0 * tau ** 3
+            )
+            / duration ** 2
+        )
+        # 位置
+        q = (q_start+ h * delta_q)
+        # 速度
+        q_dot = (h_dot * delta_q)
+        # 加速度
+        q_ddot = (h_ddot * delta_q)
+        return {
+            't': t_clamped,
+            'tau': tau,
+            'q': q,
+            'q_dot': q_dot,
+            'q_ddot': q_ddot
+        }
+
+    def calculate_trapezoidal_profile(self,q_start,q_goal,max_velocity,max_acceleration):
+        """计算单关节梯形/三角形速度轨迹参数。"""
+        delta_q = (q_goal- q_start)
+        # 运动距离
+        distance = abs(delta_q)
+        # 运动方向
+        direction = float(np.sign(delta_q))
+        # 特殊情况： 起点和终点相同
+        if distance <= 1e-12:
+            return {
+                'profile_type': 'stationary',
+                'q_start': q_start,
+                'q_goal': q_goal,
+                'delta_q': delta_q,
+                'distance': 0.0,
+                'direction': 0.0,
+                'max_velocity': max_velocity,
+                'max_acceleration': max_acceleration,
+                'peak_velocity': 0.0,
+                'acceleration_time': 0.0,
+                'cruise_time': 0.0,
+                'duration': 0.0
+            }
+        # 判断达到 vmax 所需要的最小距离
+        # D_switch = vmax^2 / amax
+        switching_distance = (
+            max_velocity ** 2
+            / max_acceleration
+        )
+        # 情况 1：标准梯形
+        if distance >= switching_distance:
+
+            profile_type = '标准梯形'
+            peak_velocity = (max_velocity)  #峰值速度大小
+            acceleration_time = (
+                peak_velocity
+                / max_acceleration
+            )
+            #匀速距离
+            cruise_distance = (
+                distance
+                - peak_velocity ** 2
+                / max_acceleration
+            )
+            #匀速时间
+            cruise_time = (
+                cruise_distance
+                / peak_velocity
+            )
+        # 情况 2：三角形
+        else:
+            profile_type = '三角形'
+            peak_velocity = np.sqrt(
+                max_acceleration
+                * distance
+            )
+            acceleration_time = (
+                peak_velocity
+                / max_acceleration
+            )
+            cruise_time = 0.0
+        duration = (
+            2.0 * acceleration_time
+            + cruise_time
+        )
+        return {
+            'profile_type': profile_type,
+            'q_start': q_start,
+            'q_goal': q_goal,
+            'delta_q': delta_q,
+            'distance': distance,
+            'direction': direction,
+            'max_velocity': max_velocity,
+            'max_acceleration': max_acceleration,
+            'peak_velocity': peak_velocity,
+            'acceleration_time':
+                acceleration_time,
+            'cruise_time':
+                cruise_time,
+            'duration':
+                duration
+        }
+
+    def scale_trapezoidal_profile(self,profile,target_duration):
+        """
+        时间缩放梯形速度轨迹。
+        保持： 起点 终点 轨迹类型
+        只改变： 执行时间 速度 加速度
+        """
+        original_duration = (
+            profile['duration']
+        )
+        # 时间比例
+        r = (
+            original_duration
+            /
+            target_duration
+        )
+        # 复制原字典
+        scaled_profile = profile.copy()
+        # 时间缩放
+        # v' = r v
+        # a' = r^2 a
+        scaled_profile['peak_velocity'] = (
+            r
+            *
+            profile['peak_velocity']
+        )
+        scaled_profile['max_velocity'] = (
+            r
+            *
+            profile['max_velocity']
+        )
+        scaled_profile['max_acceleration'] = (
+            r**2
+            *
+            profile['max_acceleration']
+        )
+        # 时间参数同步
+        scaled_profile['acceleration_time'] = (
+            profile['acceleration_time']
+            /
+            r
+        )
+        scaled_profile['cruise_time'] = (
+            profile['cruise_time']
+            /
+            r
+        )
+        scaled_profile['duration'] = (target_duration)
+        return scaled_profile
+
+    def sample_trapezoidal_trajectory(self,profile,t):
+        """采样单关节梯形/三角形速度轨迹。"""
+        q_start = profile['q_start']
+        q_goal = profile['q_goal']
+        direction = profile['direction']
+        peak_velocity = profile['peak_velocity']
+        max_acceleration = profile['max_acceleration']
+        acceleration_time = (
+            profile['acceleration_time']
+        )
+        cruise_time = (
+            profile['cruise_time']
+        )
+        duration = (
+            profile['duration']
+        )
+        # 静止情况 
+        # q_goal - q_start = 0 
+        if profile['profile_type'] == 'stationary':
+
+            return {
+                't': 0.0,
+                'q': q_start,
+                'q_dot': 0.0,
+                'q_ddot': 0.0,
+                'phase': 'stationary'
+            }
+        # 限制查询时间在 [0, T]
+        t_clamped = float(
+            np.clip(
+                t,
+                0.0,
+                duration
+            )
+        )
+        # 关键时间  加速结束时间
+        t_acc_end = (acceleration_time)
+        # 减速开始时间
+        t_dec_start = (
+            acceleration_time
+            + cruise_time
+        )
+        # 关键位置 加速结束位置
+        q_acc_end = (
+            q_start
+            + direction
+            * 0.5
+            * max_acceleration
+            * acceleration_time ** 2
+        )
+        # 减速开始位置
+        q_dec_start = (
+            q_acc_end
+            + direction
+            * peak_velocity
+            * cruise_time
+        )
+        # 第一段：加速
+        if t_clamped < t_acc_end:
+            q = (
+                q_start
+                + direction
+                * 0.5
+                * max_acceleration
+                * t_clamped ** 2
+            )
+            q_dot = (
+                direction
+                * max_acceleration
+                * t_clamped
+            )
+            q_ddot = (
+                direction
+                * max_acceleration
+            )
+            phase = '加速阶段'
+        # 第二段：匀速
+        elif t_clamped < t_dec_start:
+            local_time = (
+                t_clamped
+                - t_acc_end
+            )
+            q = (
+                q_acc_end
+                + direction
+                * peak_velocity
+                * local_time
+            )
+            q_dot = (
+                direction
+                * peak_velocity
+            )
+            q_ddot = 0.0
+            phase = '匀速阶段'
+        # 第三段：减速
+        else:
+
+            local_time = (
+                t_clamped
+                - t_dec_start
+            )
+            q = (
+                q_dec_start
+                + direction
+                * (
+                    peak_velocity
+                    * local_time
+                    - 0.5
+                    * max_acceleration
+                    * local_time ** 2
+                )
+            )
+            q_dot = (
+                direction
+                * (
+                    peak_velocity
+                    - max_acceleration
+                    * local_time
+                )
+            )
+            q_ddot = (
+                -direction
+                * max_acceleration
+            )
+            phase = '减速阶段'
+        # 防止浮点误差导致终点出现极小偏差
+        if t_clamped >= duration:
+            q = q_goal
+            q_dot = 0.0
+            q_ddot = 0.0
+        return {
+            't': t_clamped,
+            'q': q,
+            'q_dot': q_dot,
+            'q_ddot': q_ddot,
+            'phase': phase
+        }
+
+    def calculate_multi_joint_profile(self,q_start,q_goal,max_velocity,max_acceleration):
+        "计算多关节配置，用于时间缩放"
+        #计算原始时间
+        #假设三个关节  分别计算 各个关节的时间
+        profiles = []       #python空列表初始化
+        durations = []
+        for i in range(len(q_start)):
+            profile = self.calculate_trapezoidal_profile(
+                q_start[i],
+                q_goal[i],
+                max_velocity[i],
+                max_acceleration[i]
+            )
+            profiles.append(profile)
+            durations.append(
+                profile['duration']
+            )
+        #同步时间
+        T_sync = max(durations)
+        # self.get_logger().info(
+        #     f"original durations: {durations}"
+        # )
+
+        # self.get_logger().info(
+        #     f"T_sync: {T_sync}"
+        # )
+        #重新缩放
+        sync_profiles=[]
+        for i in range(len(q_start)):
+            Ti = durations[i]
+            r = Ti / T_sync
+            v_new = (r * max_velocity[i])
+            a_new = ( r**2 * max_acceleration[i])
+
+            #会重新触发轨迹结构判断 造成 之前的矩阵变为三角形 
+            #   新定义了一个最大速度 最大加速度 然后Dswitch 变大
+            #   然后 它实际的距离小于Dswitch  还没达到最大速度就要减速 然后 被判断为三角形
+            #   浮点误差 边界判断 三角形/梯形临界情况 重新计算阶段时间
+
+            # #重新规划  调用之前的 calculate_trapezoidal_profile() 函数
+            # profile_sync = (
+            #     self.calculate_trapezoidal_profile(
+            #         q_start[i],
+            #         q_goal[i],
+            #         v_new,
+            #         a_new
+            #     )
+            # )
+
+            #直接时间缩放原profile
+            profile_sync = (
+                self.scale_trapezoidal_profile(
+                    profiles[i],
+                    T_sync
+                )
+            )
+            sync_profiles.append(
+                profile_sync
+            )
+        return {
+        "profiles": sync_profiles,
+        "duration": T_sync
+        }
+
+    def sample_multi_joint_trajectory(self,sync_profiles,dt):
+        "多关节轨迹采样器"
+
 
     # ==================================================
     # 已完成学习实验
@@ -1196,6 +1750,394 @@ class KinematicsMonitor(Node):
             f'violation_1: {violation_1:.10f}\n'
             f'violation_2: {violation_2:.10f}'
         )
+
+    def experiment_cubic_trajectory_duration(self):
+        """三次轨迹最短时间计算与轨迹采样测试。"""
+        # 测试参数
+        q_start = np.array([
+            0.0,
+            0.0,
+            0.0
+        ])
+        q_goal = np.array([
+            1.0,
+            -0.5,
+            0.8
+        ])
+        max_velocity = np.array([
+            0.5,
+            0.5,
+            0.5
+        ])
+        max_acceleration = np.array([
+            1.0,
+            1.0,
+            1.0
+        ])
+        # 计算三次轨迹最短时间
+        trajectory_time = (
+            self.calculate_cubic_trajectory_duration(
+                q_start,
+                q_goal,
+                max_velocity,
+                max_acceleration
+            )
+        )
+
+        # 打印测试结果
+        self.get_logger().info(
+            '\n'
+            '===== 三次轨迹持续时间测试 =====\n'
+            f'q_start: {q_start}\n'
+            f'q_goal: {q_goal}\n'
+            f'delta_q: '
+            f'{trajectory_time["delta_q"]}\n'
+            f'time from velocity: '
+            f'{trajectory_time["time_from_velocity"]}\n'
+            f'time from acceleration: '
+            f'{trajectory_time["time_from_acceleration"]}\n'
+            f'time per joint: '
+            f'{trajectory_time["time_per_joint"]}\n'
+            f'final duration: '
+            f'{trajectory_time["duration"]:.10f} s'
+        )
+        # 从轨迹时间计算结果字典中 取出整条轨迹的总持续时间 T
+        duration = trajectory_time['duration']
+        for t_test in [
+                0.0,
+                1.5,
+                3.0]:
+            state = self.sample_cubic_trajectory(
+                q_start,
+                q_goal,
+                duration,
+                t_test
+            )
+            self.get_logger().info(
+            '\n'
+            '===== 三次轨迹样本 =====\n'
+            f"t: {state['t']:.6f}\n"
+            f"tau: {state['tau']:.6f}\n"
+            f"q: {state['q']}\n"
+            f"q_dot: {state['q_dot']}\n"
+            f"q_ddot: {state['q_ddot']}"
+    )
+
+    def experiment_quintic_trajectory_duration(self):
+        """五次轨迹最短时间计算与轨迹采样测试。"""
+        # 测试参数
+        q_start = np.array([
+            0.0,
+            0.0,
+            0.0
+        ])
+        q_goal = np.array([
+            1.0,
+            -0.5,
+            0.8
+        ])
+        max_velocity = np.array([
+            0.5,
+            0.5,
+            0.5
+        ])
+        max_acceleration = np.array([
+            1.0,
+            1.0,
+            1.0
+        ])
+        # 计算五次次轨迹最短时间
+        trajectory_time = (
+            self.calculate_quintic_trajectory_duration(
+                q_start,
+                q_goal,
+                max_velocity,
+                max_acceleration
+            )
+        )
+
+        # 打印测试结果
+        self.get_logger().info(
+            '\n'
+            '===== 五次轨迹持续时间测试 =====\n'
+            f'q_start: {q_start}\n'
+            f'q_goal: {q_goal}\n'
+            f'delta_q: '
+            f'{trajectory_time["delta_q"]}\n'
+            f'time from velocity: '
+            f'{trajectory_time["time_from_velocity"]}\n'
+            f'time from acceleration: '
+            f'{trajectory_time["time_from_acceleration"]}\n'
+            f'time per joint: '
+            f'{trajectory_time["time_per_joint"]}\n'
+            f'final duration: '
+            f'{trajectory_time["duration"]:.10f} s'
+        )
+        # 从轨迹时间计算结果字典中 取出整条轨迹的总持续时间 T
+        duration = trajectory_time['duration']
+        for t_test in [
+                0.0,
+                1.875,
+                3.75]:
+            state = self.sample_quintic_trajectory(
+                q_start,
+                q_goal,
+                duration,
+                t_test
+            )
+            self.get_logger().info(
+            '\n'
+            '===== 五次轨迹样本 =====\n'
+            f"t: {state['t']:.6f}\n"
+            f"tau: {state['tau']:.6f}\n"
+            f"q: {state['q']}\n"
+            f"q_dot: {state['q_dot']}\n"
+            f"q_ddot: {state['q_ddot']}"
+    )
+        tau_1 = (
+            3.0 - np.sqrt(3.0)
+        ) / 6.0
+
+        tau_2 = (
+            3.0 + np.sqrt(3.0)
+        ) / 6.0
+        for tau_test in [
+                tau_1,
+                tau_2]:
+            t_test = (
+                tau_test
+                * duration
+            )
+            state = self.sample_quintic_trajectory(
+                q_start,
+                q_goal,
+                duration,
+                t_test
+            )
+            self.get_logger().info(
+                '\n'
+                '===== 五次轨迹最大加速度测试 =====\n'
+                f"t: {state['t']:.10f}\n"
+                f"tau: {state['tau']:.10f}\n"
+                f"q_ddot: {state['q_ddot']}"
+            )
+
+    def experiment_trapezoidal_profile(self):
+        """测试梯形速度轨迹和三角形速度轨迹。"""
+        # 1. 标准梯形速度轨迹
+        # 位移较大，可以达到最大速度 max_velocity
+        # 加速 -> 匀速 -> 减速
+        profile_trapezoidal = (
+            self.calculate_trapezoidal_profile(
+                q_start=0.0,
+                q_goal=1.0,
+                max_velocity=0.5,
+                max_acceleration=1.0
+            )
+        )
+        # 2. 三角形速度轨迹
+        # 位移较小，还没有达到 max_velocity
+        # 加速 -> 减速
+        profile_triangular = (
+            self.calculate_trapezoidal_profile(
+                q_start=0.0,
+                q_goal=0.1,
+                max_velocity=0.5,
+                max_acceleration=1.0
+            )
+        )
+        # 3. 负方向测试
+        # 用来检查函数是否能够正确处理 负方向的关节运动。
+        profile_reverse = (
+            self.calculate_trapezoidal_profile(
+                q_start=0.0,
+                q_goal=-0.5,
+                max_velocity=0.5,
+                max_acceleration=1.0
+            )
+        )
+        self.get_logger().info(
+            '\n'
+            '===== 标准梯形速度轨迹测试 =====\n'
+            f'profile: {profile_trapezoidal}'
+            '\n'
+            '===== 三角形速度轨迹测试 =====\n'
+            f'profile: {profile_triangular}'
+            '\n'
+            '===== 反方向梯形速度轨迹测试 =====\n'
+            f'profile: {profile_reverse}'
+        )
+        #  定义统一采样函数
+        def sample_and_print(profile, name, sample_times):
+            for t_test in sample_times:
+                state = (
+                    self.sample_trapezoidal_trajectory(
+                        profile,
+                        t_test
+                    )
+                )
+                self.get_logger().info(
+                    '\n'
+                    f'===== {name}采样 =====\n'
+                    f"t: {state['t']:.6f}\n"
+                    f"phase: {state['phase']}\n"
+                    f"q: {state['q']:.10f}\n"
+                    f"q_dot: {state['q_dot']:.10f}\n"
+                    f"q_ddot: {state['q_ddot']:.10f}"
+                )
+        # 4. 标准梯形采样
+        sample_and_print(
+            profile_trapezoidal,
+            '梯形轨迹',
+            [
+                0.0,
+                0.25,
+                0.5,
+                1.0,
+                2.0,
+                2.25,
+                2.5
+            ]
+        )
+        # 5. 三角形采样
+        # 没有匀速阶段
+        sample_and_print(
+            profile_triangular,
+            '三角形轨迹',
+            [
+                0.0,
+                0.1,
+                profile_triangular['acceleration_time'],
+                profile_triangular['duration']/2.0,
+                profile_triangular['duration']-0.1,
+                profile_triangular['duration']
+            ]
+        )
+        # 6. 负方向采样
+        sample_and_print(
+            profile_reverse,
+            '负方向轨迹',
+            [
+                0.0,
+                0.25,
+                0.5,
+                1.0,
+                1.5
+            ]
+        )
+
+    def experiment_multi_joint_profile(self):
+        """测试多关节梯形轨迹时间同步。"""
+        # 1. 三个关节起点和目标位置
+        q_start = np.array([
+            0.0,
+            0.0,
+            0.0
+        ])
+        q_goal = np.array([
+            1.0,
+            -0.5,
+            0.8
+        ])
+        # 2. 每个关节速度和加速度限制
+        max_velocity = np.array([
+            0.5,
+            0.5,
+            0.5
+        ])
+        max_acceleration = np.array([
+            1.0,
+            1.0,
+            1.0
+        ])
+        # 3. 多关节同步轨迹计算
+        result = (
+            self.calculate_multi_joint_profile(
+                q_start,
+                q_goal,
+                max_velocity,
+                max_acceleration
+            )
+        )
+        sync_profiles = result["profiles"]
+        T_sync = result["duration"]
+        # 4. 输出同步结果
+        self.get_logger().info(
+            '\n'
+            '===== 多关节 同步 =====\n'
+            f'同步时间: {T_sync:.6f}'
+        )
+        for i, profile in enumerate(sync_profiles):
+            self.get_logger().info(
+                '\n'
+                f'===== Joint {i+1} =====\n'
+                f'轨迹类型: '
+                f'{profile["profile_type"]}\n'
+                f'持续时间: '
+                f'{profile["duration"]:.6f}\n'
+                f'峰值速度: '
+                f'{profile["peak_velocity"]:.6f}\n'
+                f'加速时间: '
+                f'{profile["acceleration_time"]:.6f}\n'
+                f'匀速时间: '
+                f'{profile["cruise_time"]:.6f}'
+            )
+
+        # 定义统一采样打印函数
+        def sample_and_print(profiles,sample_times):
+            for t_test in sample_times:
+                self.get_logger().info(
+                    '\n'
+                    '===== 多关节同步采样 =====\n'
+                    f't: {t_test:.6f}'
+                )
+                for i, profile in enumerate(profiles):
+                    state = (
+                        self.sample_trapezoidal_trajectory(
+                            profile,
+                            t_test
+                        )
+                    )
+                    self.get_logger().info(
+                        '\n'
+                        f'===== Joint {i+1} =====\n'
+                        f'q: {state["q"]:.10f}\n'
+                        f'q_dot: {state["q_dot"]:.10f}\n'
+                        f'q_ddot: {state["q_ddot"]:.10f}\n'
+                        f'phase: {state["phase"]}'
+                    )
+        # 同步轨迹采样测试
+        sample_and_print(
+            sync_profiles,
+            [
+                0.0,
+                T_sync / 2.0,
+                T_sync
+            ]
+        )
+        #同步终点验证
+        tolerance = 1e-8
+        for i, profile in enumerate(sync_profiles):
+            state = self.sample_trapezoidal_trajectory(
+                profile,
+                T_sync
+            )
+            position_error = abs(
+                state['q']
+                -
+                q_goal[i]
+            )
+            velocity_error = abs(
+                state['q_dot']
+            )
+            self.get_logger().info(
+                '\n'
+                f'Joint {i+1} endpoint check\n'
+                f'position error: {position_error:.10e}\n'
+                f'velocity error: {velocity_error:.10e}'
+            )
+
+
 
     # ==================================================
    
