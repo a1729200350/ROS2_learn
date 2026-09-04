@@ -1,0 +1,24 @@
+controller_manager:
+  ros__parameters:
+   # 控制器更新频率
+    update_rate: 100
+    # 关节状态广播器
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    # 关节轨迹控制器
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+# 轨迹控制器
+joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - joint1
+      - joint2
+      - joint3
+    # 发送给硬件的控制接口
+    command_interfaces:
+      - position
+    # 从硬件读取的状态接口
+    state_interfaces:
+      - position
+      - velocity

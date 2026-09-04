@@ -97,49 +97,49 @@
   />
   </joint>
   <!--第三个连杆-->
-    <link name="link3">
-    <visual>
-      <!-- 让关节在杆的一端 -->
-      <origin xyz="0.20 0 0"/>
-      <geometry>
-        <box size ="0.4 0.05 0.05"/>
-      </geometry>
-      <material name="green">
-        <color rgba="0 1 0 1"/>
-      </material>
-    </visual>
-    <collision>
+  <link name="link3">
+  <visual>
+    <!-- 让关节在杆的一端 -->
+    <origin xyz="0.20 0 0"/>
+    <geometry>
+      <box size ="0.4 0.05 0.05"/>
+    </geometry>
+    <material name="green">
+      <color rgba="0 1 0 1"/>
+    </material>
+  </visual>
+  <collision>
 
-      <origin xyz="0.2 0 0"/>
+    <origin xyz="0.2 0 0"/>
 
-      <geometry>
-        <box size="0.4 0.05 0.05"/>
-      </geometry>
+    <geometry>
+      <box size="0.4 0.05 0.05"/>
+    </geometry>
 
-    </collision>
-    <inertial>
+  </collision>
+  <inertial>
 
-      <origin xyz="0.2 0 0" rpy="0 0 0"/>
+    <origin xyz="0.2 0 0" rpy="0 0 0"/>
 
-      <mass value="0.8"/>
+    <mass value="0.8"/>
 
-      <!--
-      均匀密度长方体惯性公式:
+    <!--
+    均匀密度长方体惯性公式:
 
-      绕 x 轴: Ixx = (1/12) * m * (Ly^2 + Lz^2)
-      绕 y 轴：Iyy = (1/12) * m * (Lx^2 + Lz^2)
-      绕 z 轴：Izz = (1/12) * m * (Lx^2 + Ly^2)
-      -->
+    绕 x 轴: Ixx = (1/12) * m * (Ly^2 + Lz^2)
+    绕 y 轴：Iyy = (1/12) * m * (Lx^2 + Lz^2)
+    绕 z 轴：Izz = (1/12) * m * (Lx^2 + Ly^2)
+    -->
 
-      <inertia
-          ixx="0.000167"
-          ixy="0"
-          ixz="0"
-          iyy="0.01083"
-          iyz="0"
-          izz="0.01083"/>
+    <inertia
+        ixx="0.000167"
+        ixy="0"
+        ixz="0"
+        iyy="0.01083"
+        iyz="0"
+        izz="0.01083"/>
 
-    </inertial>
+  </inertial>
   </link>
   <!--第三个关节-->
   <joint name="joint3" type="revolute">
@@ -168,4 +168,49 @@
     <child link="tool0"/>
     <origin xyz="0.4 0 0" rpy="0 0 0"/>
   </joint>
+  <!-- ros2_control 配置 -->
+  <ros2_control name="arm_system" type="system">
+
+  <hardware>
+    <plugin>
+      mock_components/GenericSystem
+    </plugin>
+    <!-- 仿真硬件传输参数 -->
+    <param name="fake_sensor_commands">
+      true
+    </param>
+  </hardware>
+
+
+  <joint name="joint1">
+
+    <command_interface name="position"/>
+
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+
+  </joint>
+
+
+  <joint name="joint2">
+
+    <command_interface name="position"/>
+
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+
+  </joint>
+
+
+  <joint name="joint3">
+
+    <command_interface name="position"/>
+
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+
+  </joint>
+
+
+  </ros2_control>
 </robot>

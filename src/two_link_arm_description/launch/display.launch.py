@@ -1,10 +1,7 @@
 import os
-
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
-
-
 def generate_launch_description():
     # 找到当前功能包安装后的路径
     package_path = get_package_share_directory('two_link_arm_description')
@@ -19,12 +16,12 @@ def generate_launch_description():
         executable='robot_state_publisher',
         parameters=[{'robot_description': robot_description}]
     )
-    # 提供 joint1、joint2 的滑块
-    joint_state_publisher_gui_node = Node(
-        package='joint_state_publisher_gui',
-        executable='joint_state_publisher_gui',
-        parameters=[{'rate': 600}]
-    )
+    # # 提供 joint1、joint2 的滑块
+    # joint_state_publisher_gui_node = Node(
+    #     package='joint_state_publisher_gui',
+    #     executable='joint_state_publisher_gui',
+    #     parameters=[{'rate': 600}]
+    # )
     # 启动 RViz2
     rviz_node = Node(
         package='rviz2',
@@ -34,6 +31,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         robot_state_publisher_node,
-        joint_state_publisher_gui_node,
+        # joint_state_publisher_gui_node,
         rviz_node
     ])
