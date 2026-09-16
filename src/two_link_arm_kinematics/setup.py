@@ -27,6 +27,7 @@ setup(
           'kinematics_monitor = two_link_arm_kinematics.kinematics_monitor:main',
           'trajectory_monitor = two_link_arm_kinematics.trajectory_monitor:main',
           'trajectory_generator = two_link_arm_kinematics.trajectory_generator:main',
+          'dynamics_monitor = two_link_arm_kinematics.dynamics_monitor:main',
         ],
     },
 )

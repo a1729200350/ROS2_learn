@@ -8,6 +8,15 @@
         </geometry>
     </visual>
   </link>
+  <!-- 机械臂安装坐标系：把平面3R竖起来 -->
+  <link name="arm_base"/>
+  <joint name="arm_base_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="arm_base"/>
+    <origin
+      xyz="0 0 0.05"
+      rpy="0 -1.57079632679 0"/>
+  </joint>
   <!--第一根连杆-->
   <link name="link1">
     <visual>
@@ -40,9 +49,9 @@
   </link>
   <!--第一个关节-->
   <joint name="joint1" type="revolute">
-    <parent link="base_link"/>
+    <parent link="arm_base"/>
     <child link="link1"/>
-    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
     <limit
         lower="-3.14"
