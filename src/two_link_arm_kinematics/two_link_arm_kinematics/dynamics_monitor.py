@@ -5,32 +5,34 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory
+from two_link_arm_kinematics.dynamics_model import (DynamicsModel)
 class DynamicsMonitor(Node):
 
   def __init__(self):
     super().__init__('dynamics_monitor')
 
-    # ---------- 机器人参数 ----------
-    # 连杆长度 [m]
-    self.L1 = 0.5
-    self.L2 = 0.4
-    self.L3 = 0.4
+    # # ---------- 机器人参数 ----------
+    # # 连杆长度 [m]
+    # self.L1 = 0.5
+    # self.L2 = 0.4
+    # self.L3 = 0.4
 
-    # 各个关节到连杆质心的距离 [m]
-    self.r1 = 0.25
-    self.r2 = 0.20
-    self.r3 = 0.20
+    # # 各个关节到连杆质心的距离 [m]
+    # self.r1 = 0.25
+    # self.r2 = 0.20
+    # self.r3 = 0.20
 
-    # 连杆质量 [kg]
-    self.m1 = 1.0
-    self.m2 = 0.8
-    self.m3 = 0.8
+    # # 连杆质量 [kg]
+    # self.m1 = 1.0
+    # self.m2 = 0.8
+    # self.m3 = 0.8
 
-    # 绕各质心z轴的转动惯量 [kg*m^2]
-    self.I1 = 0.02104
-    self.I2 = 0.01083
-    self.I3 = 0.01083
+    # # 绕各质心z轴的转动惯量 [kg*m^2]
+    # self.I1 = 0.02104
+    # self.I2 = 0.01083
+    # self.I3 = 0.01083
 
+    self.model = DynamicsModel()
     self.joint_state_subscription = self.create_subscription(
       JointState,
       '/joint_states',
@@ -56,225 +58,226 @@ class DynamicsMonitor(Node):
 
     self.get_logger().info('动力学监视器启动.')
 
-  def calculate_mass_matrix(self, q):
-    """计算3x3空间关节质量矩阵 M(q)."""
-    q1, q2, q3 = q
-    q12 = q1 + q2
-    q123 = q12 + q3
+  # def calculate_mass_matrix(self, q):
+  #   """计算3x3空间关节质量矩阵 M(q)."""
+  #   q1, q2, q3 = q
+  #   q12 = q1 + q2
+  #   q123 = q12 + q3
 
-    s1 = math.sin(q1)
-    c1 = math.cos(q1)
+  #   s1 = math.sin(q1)
+  #   c1 = math.cos(q1)
 
-    s12 = math.sin(q12)
-    c12 = math.cos(q12)
+  #   s12 = math.sin(q12)
+  #   c12 = math.cos(q12)
 
-    s123 = math.sin(q123)
-    c123 = math.cos(q123)
+  #   s123 = math.sin(q123)
+  #   c123 = math.cos(q123)
 
-    # 连杆1 的质心雅可比矩阵
-    Jv1 = np.array([
-        [-self.r1 * s1, 0.0, 0.0],
-        [ self.r1 * c1, 0.0, 0.0]
-    ])
+  #   # 连杆1 的质心雅可比矩阵
+  #   Jv1 = np.array([
+  #       [-self.r1 * s1, 0.0, 0.0],
+  #       [ self.r1 * c1, 0.0, 0.0]
+  #   ])
 
-    Jw1 = np.array([
-        [1.0, 0.0, 0.0]
-    ])
+  #   Jw1 = np.array([
+  #       [1.0, 0.0, 0.0]
+  #   ])
 
-    # 连杆2 的质心雅克比矩阵
-    Jv2 = np.array([
-      [
-        -self.L1 * s1 - self.r2 * s12,
-        -self.r2 * s12,
-        0.0
-      ],
-      [
-        self.L1 * c1 + self.r2 * c12,
-        self.r2 * c12,
-        0.0
-      ]
-    ])
+  #   # 连杆2 的质心雅克比矩阵
+  #   Jv2 = np.array([
+  #     [
+  #       -self.L1 * s1 - self.r2 * s12,
+  #       -self.r2 * s12,
+  #       0.0
+  #     ],
+  #     [
+  #       self.L1 * c1 + self.r2 * c12,
+  #       self.r2 * c12,
+  #       0.0
+  #     ]
+  #   ])
 
-    Jw2 = np.array([
-        [1.0, 1.0, 0.0]
-    ])
+  #   Jw2 = np.array([
+  #       [1.0, 1.0, 0.0]
+  #   ])
 
-    # 连杆3 的质心雅克比矩阵
-    Jv3 = np.array([
-      [
-        -self.L1 * s1
-        - self.L2 * s12
-        - self.r3 * s123,
+  #   # 连杆3 的质心雅克比矩阵
+  #   Jv3 = np.array([
+  #     [
+  #       -self.L1 * s1
+  #       - self.L2 * s12
+  #       - self.r3 * s123,
 
-        -self.L2 * s12
-        - self.r3 * s123,
+  #       -self.L2 * s12
+  #       - self.r3 * s123,
 
-        -self.r3 * s123
-      ],
-      [
-        self.L1 * c1
-        + self.L2 * c12
-        + self.r3 * c123,
+  #       -self.r3 * s123
+  #     ],
+  #     [
+  #       self.L1 * c1
+  #       + self.L2 * c12
+  #       + self.r3 * c123,
 
-        self.L2 * c12
-        + self.r3 * c123,
+  #       self.L2 * c12
+  #       + self.r3 * c123,
 
-        self.r3 * c123
-      ]
-    ])
+  #       self.r3 * c123
+  #     ]
+  #   ])
 
-    Jw3 = np.array([
-      [1.0, 1.0, 1.0]
-    ])
+  #   Jw3 = np.array([
+  #     [1.0, 1.0, 1.0]
+  #   ])
 
-    # 单独连杆的贡献
-    # M_i = m_i Jv_i^T Jv_i + I_i Jw_i^T Jw_i
-    M1 = (
-        self.m1 * Jv1.T @ Jv1
-        + self.I1 * Jw1.T @ Jw1
-    )
+  #   # 单独连杆的贡献
+  #   # M_i = m_i Jv_i^T Jv_i + I_i Jw_i^T Jw_i
+  #   M1 = (
+  #       self.m1 * Jv1.T @ Jv1
+  #       + self.I1 * Jw1.T @ Jw1
+  #   )
 
-    M2 = (
-        self.m2 * Jv2.T @ Jv2
-        + self.I2 * Jw2.T @ Jw2
-    )
+  #   M2 = (
+  #       self.m2 * Jv2.T @ Jv2
+  #       + self.I2 * Jw2.T @ Jw2
+  #   )
 
-    M3 = (
-        self.m3 * Jv3.T @ Jv3
-        + self.I3 * Jw3.T @ Jw3
-    )
+  #   M3 = (
+  #       self.m3 * Jv3.T @ Jv3
+  #       + self.I3 * Jw3.T @ Jw3
+  #   )
 
-    M = M1 + M2 + M3
-    return M
+  #   M = M1 + M2 + M3
+  #   return M
 
-  def calculate_gravity(self, q):
-    """
-    计算重力项 G(q)
-    """
-    q1, q2, q3 = q
-    q12 = q1 + q2
-    q123 = q12 + q3
-    s1 = math.sin(q1)
-    c1 = math.cos(q1)
-    s12 = math.sin(q12)
-    c12 = math.cos(q12)
-    s123 = math.sin(q123)
-    c123 = math.cos(q123)
+  # def calculate_gravity(self, q):
+  #   """
+  #   计算重力项 G(q)
+  #   """
+  #   q1, q2, q3 = q
+  #   q12 = q1 + q2
+  #   q123 = q12 + q3
+  #   s1 = math.sin(q1)
+  #   c1 = math.cos(q1)
+  #   s12 = math.sin(q12)
+  #   c12 = math.cos(q12)
+  #   s123 = math.sin(q123)
+  #   c123 = math.cos(q123)
 
-    # 重力方向
-    g = np.array([
-      -9.81,
-      0.0,
-    ])
+  #   # 重力方向
+  #   g = np.array([
+  #     -9.81,
+  #     0.0,
+  #   ])
 
-    # 连杆1 的质心雅克比矩阵
-    Jv1 = np.array([
-      [-self.r1*s1,0,0],
-      [ self.r1*c1,0,0]
-    ])
+  #   # 连杆1 的质心雅克比矩阵
+  #   Jv1 = np.array([
+  #     [-self.r1*s1,0,0],
+  #     [ self.r1*c1,0,0]
+  #   ])
 
-    # 连杆2 的质心雅克比矩阵
-    Jv2 = np.array([
-      [
-      -self.L1*s1-self.r2*s12,
-      -self.r2*s12,
-      0
-      ],
-      [
-      self.L1*c1+self.r2*c12,
-      self.r2*c12,
-      0
-      ]
-    ])
+  #   # 连杆2 的质心雅克比矩阵
+  #   Jv2 = np.array([
+  #     [
+  #     -self.L1*s1-self.r2*s12,
+  #     -self.r2*s12,
+  #     0
+  #     ],
+  #     [
+  #     self.L1*c1+self.r2*c12,
+  #     self.r2*c12,
+  #     0
+  #     ]
+  #   ])
 
-    # 连杆3 的质心雅克比矩阵
-    Jv3=np.array([
-      [
-      -self.L1*s1-self.L2*s12-self.r3*s123,
-      -self.L2*s12-self.r3*s123,
-      -self.r3*s123
-      ],
-      [
-      self.L1*c1+self.L2*c12+self.r3*c123,
-      self.L2*c12+self.r3*c123,
-      self.r3*c123
-      ]
-    ])
+  #   # 连杆3 的质心雅克比矩阵
+  #   Jv3=np.array([
+  #     [
+  #     -self.L1*s1-self.L2*s12-self.r3*s123,
+  #     -self.L2*s12-self.r3*s123,
+  #     -self.r3*s123
+  #     ],
+  #     [
+  #     self.L1*c1+self.L2*c12+self.r3*c123,
+  #     self.L2*c12+self.r3*c123,
+  #     self.r3*c123
+  #     ]
+  #   ])
 
-    Q_g = (
-      self.m1*Jv1.T@g
-      +
-      self.m2*Jv2.T@g
-      +
-      self.m3*Jv3.T@g
-    )
-    G=-Q_g
+  #   Q_g = (
+  #     self.m1*Jv1.T@g
+  #     +
+  #     self.m2*Jv2.T@g
+  #     +
+  #     self.m3*Jv3.T@g
+  #   )
+  #   G=-Q_g
 
-    return G
+  #   return G
 
-  def calculate_velocity_term(self, q, q_dot, epsilon=1e-6):
-    """
-    计算速度相关项 V(q, q_dot)。
+  # def calculate_velocity_term(self, q, q_dot, epsilon=1e-6):
+  #   """
+  #   计算速度相关项 V(q, q_dot)。
 
-    V_i = sum_j sum_k gamma_ijk * q_dot_j * q_dot_k
-    """
-    # gamma_ijk =1/2 * (dM_ij/dq_k + dM_ik/dq_j - dM_jk/dq_i )
-    #epsolon=1e-6  用于计算数值导数的微小增量
-    #dtype=float  确保输入是浮点数数组  进行浮点运算
-    q = np.asarray(q, dtype=float)
-    q_dot = np.asarray(q_dot, dtype=float)
-    #共有 三个关节
-    n = 3
+  #   V_i = sum_j sum_k gamma_ijk * q_dot_j * q_dot_k
+  #   """
+  #   # gamma_ijk =1/2 * (dM_ij/dq_k + dM_ik/dq_j - dM_jk/dq_i )
+  #   #epsolon=1e-6  用于计算数值导数的微小增量
+  #   #dtype=float  确保输入是浮点数数组  进行浮点运算
+  #   q = np.asarray(q, dtype=float)
+  #   q_dot = np.asarray(q_dot, dtype=float)
+  #   #共有 三个关节
+  #   n = 3
 
-    # dM_dq[k, i, j] 表示：
-    #
-    #       ∂M_ij
-    #       -----
-    #        ∂q_k
-    # 第一个索引 k：对哪个关节变量求偏导
-    # 第二个索引 i：M 的第几行
-    # 第三个索引 j：M 的第几列
-    #数学编号是 1,2,3，Python 编号是 0,1,2
-    dM_dq = np.zeros((n, n, n))
-    # 使用中心差分计算 ∂M/∂q_k
-    for k in range(n):
-      dq = np.zeros(n)
-      #每个关节只扰动一次
-      dq[k] = epsilon
-      M_plus = self.calculate_mass_matrix(q + dq)
-      M_minus = self.calculate_mass_matrix(q - dq)
-      dM_dq[k] = ( M_plus - M_minus ) / (2.0 * epsilon)
-    # 根据 gamma_ijk 计算 V_i
-    V = np.zeros(n)
-    for i in range(n):
-      for j in range(n):
-        for k in range(n):
-          gamma_ijk = 0.5 * (dM_dq[k, i, j] + dM_dq[j, i, k] - dM_dq[i, j, k])
-          V[i] += ( gamma_ijk * q_dot[j] * q_dot[k] )
+  #   # dM_dq[k, i, j] 表示：
+  #   #
+  #   #       ∂M_ij
+  #   #       -----
+  #   #        ∂q_k
+  #   # 第一个索引 k：对哪个关节变量求偏导
+  #   # 第二个索引 i：M 的第几行
+  #   # 第三个索引 j：M 的第几列
+  #   #数学编号是 1,2,3，Python 编号是 0,1,2
+  #   dM_dq = np.zeros((n, n, n))
+  #   # 使用中心差分计算 ∂M/∂q_k
+  #   for k in range(n):
+  #     dq = np.zeros(n)
+  #     #每个关节只扰动一次
+  #     dq[k] = epsilon
+  #     M_plus = self.model.calculate_mass_matrix(q + dq)
+  #     M_minus = self.model.calculate_mass_matrix(q - dq)
+  #     dM_dq[k] = ( M_plus - M_minus ) / (2.0 * epsilon)
+  #   # 根据 gamma_ijk 计算 V_i
+  #   V = np.zeros(n)
+  #   for i in range(n):
+  #     for j in range(n):
+  #       for k in range(n):
+  #         gamma_ijk = 0.5 * (dM_dq[k, i, j] + dM_dq[j, i, k] - dM_dq[i, j, k])
+  #         V[i] += ( gamma_ijk * q_dot[j] * q_dot[k] )
 
-    return V
+  #   return V
 
-  def calculate_inverse_dynamics(self, q, q_dot, q_ddot):
-    """
-    计算逆动力学关节力矩：
+  # def calculate_inverse_dynamics(self, q, q_dot, q_ddot):
+  #   """
+  #   计算逆动力学关节力矩：
 
-        tau = M(q) q_ddot + V(q, q_dot) + G(q)
-    """
-    q = np.asarray(q, dtype=float)
-    q_dot = np.asarray(q_dot, dtype=float)
-    q_ddot = np.asarray(q_ddot, dtype=float)
+  #       tau = M(q) q_ddot + V(q, q_dot) + G(q)
+  #   """
+  #   q = np.asarray(q, dtype=float)
+  #   q_dot = np.asarray(q_dot, dtype=float)
+  #   q_ddot = np.asarray(q_ddot, dtype=float)
 
-    M = self.calculate_mass_matrix(q)
-    V = self.calculate_velocity_term(q, q_dot)
-    G = self.calculate_gravity(q)
+  #   M = self.model.calculate_mass_matrix(q)
+  #   V = self.calculate_velocity_term(q, q_dot)
+  #   G = self.calculate_gravity(q)
 
-    tau_inertia = M @ q_ddot
+  #   tau_inertia = M @ q_ddot
 
-    tau = tau_inertia + V + G
+  #   tau = tau_inertia + V + G
 
-    return tau
+  #   return tau
 
   def joint_state_callback(self, msg):
+
     """    
     从 /joint_states 读取实际关节位置 q 和速度 q_dot，
 
@@ -529,9 +532,9 @@ class DynamicsMonitor(Node):
     q_dot = self.latest_q_dot.copy()
 
     # ---------- 动力学 ----------
-    M = self.calculate_mass_matrix(q)
-    V = self.calculate_velocity_term( q, q_dot)
-    G = self.calculate_gravity(q)
+    M = self.model.calculate_mass_matrix(q)
+    V = self.model.calculate_velocity_term( q, q_dot)
+    G = self.model.calculate_gravity(q)
 
     # 当前没有 q_ddot，因此这里只计算偏置力矩
     tau_bias = V + G

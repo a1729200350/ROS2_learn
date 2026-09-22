@@ -28,6 +28,8 @@ setup(
           'trajectory_monitor = two_link_arm_kinematics.trajectory_monitor:main',
           'trajectory_generator = two_link_arm_kinematics.trajectory_generator:main',
           'dynamics_monitor = two_link_arm_kinematics.dynamics_monitor:main',
+          'joint_space_control_monitor = two_link_arm_kinematics.joint_space_control_monitor:main',
+          'computed_torque_control_monitor = two_link_arm_kinematics.computed_torque_control_monitor:main',
         ],
     },
 )

@@ -1,10 +1,11 @@
 import numpy as np
 import rclpy
-from dynamics_monitor import DynamicsMonitor
+from two_link_arm_kinematics.dynamics_model import DynamicsModel
 if __name__ == "__main__":
-  # 初始化 ROS2
-  rclpy.init()
-  node = DynamicsMonitor()
+  # # 初始化 ROS2
+  # rclpy.init()
+  # node = DynamicsMonitor()
+  model = DynamicsModel()
   q = np.array([
     0.5,
     -0.8,
@@ -22,9 +23,9 @@ if __name__ == "__main__":
     -0.1,
     0.3
   ])
-  M = node.calculate_mass_matrix(q)
-  V = node.calculate_velocity_term(q,q_dot)
-  G = node.calculate_gravity(q)
+  M = model.calculate_mass_matrix(q)
+  V = model.calculate_velocity_term(q,q_dot)
+  G = model.calculate_gravity(q)
   tau_inertia = M @ q_ddot
   tau = (
       tau_inertia
@@ -52,5 +53,3 @@ if __name__ == "__main__":
   print("\ntau =")
   print(tau)
 
-  node.destroy_node()
-  rclpy.shutdown()
