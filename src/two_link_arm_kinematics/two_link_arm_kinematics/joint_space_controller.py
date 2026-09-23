@@ -16,6 +16,7 @@ class JointSpaceController:
     self.Kd = np.diag(
       np.asarray(kd, dtype=float)
     )
+
   def calculate_pd_torque(self, q, q_dot, q_d, q_dot_d):
     """
     关节空间 PD 控制：
@@ -51,6 +52,21 @@ class JointSpaceController:
     )
     tau_total = tau_ff + tau_pd
     return (tau_total,tau_ff,tau_pd,e,e_dot)
+
+  def calculate_classical_computed_torque(self,model,q,q_dot,q_d,q_dot_d,q_ddot_d):
+    e = q_d - q
+    e_dot = q_dot_d - q_dot
+    # 加速度修正
+    q_ddot_cmd = (
+      q_ddot_d
+      + self.Kd @ e_dot
+      + self.Kp @ e
+    )
+    M = model.calculate_mass_matrix(q)
+    V = model.calculate_velocity_term(q, q_dot)
+    G = model.calculate_gravity(q)
+    tau = (M @ q_ddot_cmd+ V+ G)
+    return tau, e, e_dot, q_ddot_cmd
 
   def calculate_control_torque(self,q,q_dot,q_d,q_dot_d,tau_ff):
     """ 逆动力学前馈 + PD 

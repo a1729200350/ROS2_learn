@@ -1,23 +1,33 @@
+# """
+# Computed Torque Controller Monitor
+
+# 功能：
+
+# 订阅：
+#     /joint_states
+#     /joint_trajectory_controller/joint_trajectory
+
+# 计算：
+
+#     tau_ff = M(qd)qdd_d + V(qd,qdot_d) + G(qd)
+
+#     tau_pd = Kp(qd-q) + Kd(qdot_d-qdot)
+
+#     tau_total = tau_ff + tau_pd
+
+# 目前只计算，不发送 effort command。
+# """
 """
-Computed Torque Controller Monitor
+e = q_d - q
 
-功能：
+e_dot = q_dot_d - q_dot
 
-订阅：
-    /joint_states
-    /joint_trajectory_controller/joint_trajectory
+q_ddot_cmd =q_ddot_d+ Kd e_dot + Kp e
 
-计算：
-
-    tau_ff = M(qd)qdd_d + V(qd,qdot_d) + G(qd)
-
-    tau_pd = Kp(qd-q) + Kd(qdot_d-qdot)
-
-    tau_total = tau_ff + tau_pd
+tau_total = M(q) q_ddot_cmd + V(q, q_dot) + G(q)
 
 目前只计算，不发送 effort command。
 """
-
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -266,31 +276,41 @@ class ComputedTorqueControlMonitor(Node):
       q_dot_d,
       q_ddot_d
     ) = desired
-    # 逆动力学
-    tau_ff = (
-      self.dynamics
-      .calculate_inverse_dynamics(
-        q_d,
-        q_dot_d,
-        q_ddot_d
-      )
-    )
-    # PD
-    (
-      tau_pd,
-      e,
-      e_dot
-    ) = self.controller.calculate_pd_torque(
+    # # 逆动力学
+    # tau_ff = (
+    #   self.dynamics
+    #   .calculate_inverse_dynamics(
+    #     q_d,
+    #     q_dot_d,
+    #     q_ddot_d
+    #   )
+    # )
+    # # PD
+    # (
+    #   tau_pd,
+    #   e,
+    #   e_dot
+    # ) = self.controller.calculate_pd_torque(
+    #   self.q,
+    #   self.q_dot,
+    #   q_d,
+    #   q_dot_d
+    # )
+    # # 总力矩
+    # tau_total = (
+    #   tau_ff
+    #   +
+    #   tau_pd
+    # )
+
+    # 经典 Computed Torque Control
+    tau_total,e,e_dot,q_ddot_cmd = self.controller.calculate_classical_computed_torque(
+      self.dynamics,
       self.q,
       self.q_dot,
       q_d,
-      q_dot_d
-    )
-    # 总力矩
-    tau_total = (
-      tau_ff
-      +
-      tau_pd
+      q_dot_d,
+      q_ddot_d
     )
 
     self.log_counter += 1
@@ -302,14 +322,25 @@ class ComputedTorqueControlMonitor(Node):
 
     self.get_logger().info(
 
+      # '\n'
+      # '========== Computed Torque ==========\n'
+      # f't = {t:.3f}s\n\n'
+      # f'q = {self.q}\n'
+      # f'q_d = {q_d}\n\n'
+      # f'e = {e}\n\n'
+      # f'tau_ff = {tau_ff}\n'
+      # f'tau_pd = {tau_pd}\n\n'
+      # f'tau_total = {tau_total} N*m'
+
       '\n'
-      '========== Computed Torque ==========\n'
+      '========== Classical Computed Torque ==========\n'
       f't = {t:.3f}s\n\n'
       f'q = {self.q}\n'
       f'q_d = {q_d}\n\n'
-      f'e = {e}\n\n'
-      f'tau_ff = {tau_ff}\n'
-      f'tau_pd = {tau_pd}\n\n'
+      f'e = {e}\n'
+      f'e_dot = {e_dot}\n\n'
+      f'q_ddot_d = {q_ddot_d}\n'
+      f'q_ddot_cmd = {q_ddot_cmd}\n\n'
       f'tau_total = {tau_total} N*m'
     )
 

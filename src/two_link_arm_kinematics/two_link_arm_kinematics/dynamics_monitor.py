@@ -424,7 +424,7 @@ class DynamicsMonitor(Node):
         for index in indices
       ], dtype=float)
 
-      tau_ff = self.calculate_inverse_dynamics(
+      tau_ff = self.model.calculate_inverse_dynamics(
         q_d,
         q_dot_d,
         q_ddot_d
