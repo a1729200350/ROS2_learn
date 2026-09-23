@@ -1,6 +1,6 @@
 import numpy as np
 #import rclpy
-from two_link_arm_kinematics.dynamics_model import DynamicsModel
+from three_link_arm_kinematics.dynamics_model import DynamicsModel
 if __name__ == "__main__":
   # # 初始化 ROS2
   # rclpy.init()

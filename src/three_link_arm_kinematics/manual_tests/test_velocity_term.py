@@ -1,8 +1,8 @@
 import numpy as np
 # import math
 # import rclpy
-# from two_link_arm_kinematics.dynamics_monitor import DynamicsMonitor
-from two_link_arm_kinematics.dynamics_model import DynamicsModel
+# from three_link_arm_kinematics.dynamics_monitor import DynamicsMonitor
+from three_link_arm_kinematics.dynamics_model import DynamicsModel
 # def test(node,q,q_dot):
 #   q = np.array(q, dtype=float)
 #   q_dot = np.array(q_dot, dtype=float)

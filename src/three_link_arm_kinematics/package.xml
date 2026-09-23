@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>two_link_arm_kinematics</name>
+  <name>three_link_arm_kinematics</name>
   <version>0.0.0</version>
   <description>Planar three-link arm kinematics and inverse-velocity experiments.</description>
   <maintainer email="a1729200350@gmail.com">wkj</maintainer>
@@ -11,6 +11,8 @@
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

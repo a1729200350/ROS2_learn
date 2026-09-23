@@ -1,8 +1,8 @@
 import numpy as np
 # import math
 # import rclpy
-# from two_link_arm_kinematics.dynamics_monitor import DynamicsMonitor
-from two_link_arm_kinematics.dynamics_model import DynamicsModel
+# from three_link_arm_kinematics.dynamics_monitor import DynamicsMonitor
+from three_link_arm_kinematics.dynamics_model import DynamicsModel
 # def test(q):
 #   M = node.calculate_mass_matrix(np.array(q))
 #   print("\n====================")

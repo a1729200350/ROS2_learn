@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<robot name="two_link_arm">
+<robot name="three_link_arm">
   <!--底座-->
   <link name="base_link">
     <visual>

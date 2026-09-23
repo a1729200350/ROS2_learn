@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory
-from two_link_arm_kinematics.joint_space_controller import (JointSpaceController)
+from three_link_arm_kinematics.joint_space_controller import (JointSpaceController)
 class JointSpaceControlMonitor(Node):
   """ROS2 在线关节空间控制监视器。"""
   def __init__(self):

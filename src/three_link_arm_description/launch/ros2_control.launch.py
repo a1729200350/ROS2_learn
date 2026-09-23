@@ -6,13 +6,13 @@ from launch_ros.substitutions import FindPackageShare
 from launch_ros.parameter_descriptions import ParameterValue
 #generate_launch_description() 函数用于生成 launch 文件的描述信息
 def generate_launch_description():
-    pkg_name = "two_link_arm_description"
+    pkg_name = "three_link_arm_description"
     # 找到 URDF 文件的路径
     urdf_file = PathJoinSubstitution(
         [
             FindPackageShare(pkg_name),
             "urdf",
-            "two_link_arm.urdf"
+            "three_link_arm.urdf"
         ]
     )
     # 读取 URDF 文件内容

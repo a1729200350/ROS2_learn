@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'two_link_arm_kinematics'
+package_name = 'three_link_arm_kinematics'
 
 setup(
     name=package_name,
@@ -24,12 +24,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-          'kinematics_monitor = two_link_arm_kinematics.kinematics_monitor:main',
-          'trajectory_monitor = two_link_arm_kinematics.trajectory_monitor:main',
-          'trajectory_generator = two_link_arm_kinematics.trajectory_generator:main',
-          'dynamics_monitor = two_link_arm_kinematics.dynamics_monitor:main',
-          'joint_space_control_monitor = two_link_arm_kinematics.joint_space_control_monitor:main',
-          'computed_torque_control_monitor = two_link_arm_kinematics.computed_torque_control_monitor:main',
+          'kinematics_monitor = three_link_arm_kinematics.kinematics_monitor:main',
+          'trajectory_monitor = three_link_arm_kinematics.trajectory_monitor:main',
+          'trajectory_generator = three_link_arm_kinematics.trajectory_generator:main',
+          'dynamics_monitor = three_link_arm_kinematics.dynamics_monitor:main',
+          'joint_space_control_monitor = three_link_arm_kinematics.joint_space_control_monitor:main',
+          'computed_torque_control_monitor = three_link_arm_kinematics.computed_torque_control_monitor:main',
         ],
     },
 )

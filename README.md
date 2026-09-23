@@ -1,14 +1,14 @@
 # ROS2_learn
 
-一个面向 ROS 2 入门与机械臂运动学实验的学习工作空间，包含双 `turtlesim`、三连杆机械臂 URDF/RViz、约束逆运动学，以及基于 ros2_control 模拟硬件的轨迹生成、执行与跟踪误差监控。
+一个面向 ROS 2 入门与机械臂运动学实验的学习工作空间，包含双 `turtlesim`、三连杆机械臂 URDF/RViz、约束逆运动学、动力学，以及基于 ros2_control 模拟硬件的轨迹生成、执行与跟踪误差监控。
 
 ## 功能包
 
 | 功能包 | 类型 | 内容 |
 | --- | --- | --- |
 | `my_turtle_launch` | `ament_python` | 同时启动两个带命名空间的 `turtlesim` 节点，分别使用红色和蓝色背景 |
-| `two_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz 启动文件及 ros2_control 模拟硬件、关节状态广播器和轨迹控制器配置 |
-| `two_link_arm_kinematics` | `ament_python` | 提供 `kinematics_monitor`、`trajectory_generator`、`trajectory_monitor` 三个入口，分别用于约束逆运动学分析、轨迹生成与发布、轨迹跟踪误差监控 |
+| `three_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz 启动文件及 ros2_control 模拟硬件、关节状态广播器和轨迹控制器配置 |
+| `three_link_arm_kinematics` | `ament_python` | 提供运动学、动力学、关节空间控制监视及轨迹生成与监控节点 |
 
 三连杆模型的连杆长度为 `L1 = 0.5 m`、`L2 = 0.4 m`、`L3 = 0.4 m`，与 URDF 和运动学节点中的参数一致。
 
@@ -18,7 +18,7 @@
 - ROS 2 Jazzy
 - Python 3、NumPy、SciPy、OSQP
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
-- ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`
+- ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`
 
 ## 获取代码与安装依赖
 
@@ -51,7 +51,7 @@ python -m pip install numpy scipy osqp
 
 `.venv/` 仅用于本机运行环境，不需要提交到仓库。
 
-新增节点使用 `trajectory_msgs`；运动学包的依赖清单目前尚未显式列出该消息包及 SciPy、OSQP，因此仅执行 `rosdep` 不保证这些依赖全部齐备。请确认运行节点的 Python/ROS 环境可以导入它们。
+运动学包已声明 `trajectory_msgs` 和 SciPy；QP 节点使用 OSQP，计算力矩节点使用 `std_msgs`，但依赖清单目前未显式列出这两项。请确认运行环境已安装并可导入它们。
 
 ## 构建
 
@@ -88,7 +88,7 @@ ros2 topic pub --rate 2 /robot1/cmd_vel geometry_msgs/msg/Twist \
 ### 2. 显示三连杆机械臂
 
 ```bash
-ros2 launch two_link_arm_description display.launch.py
+ros2 launch three_link_arm_description display.launch.py
 ```
 
 当前 `display.launch.py` 只启动 `robot_state_publisher` 和 RViz2，关节滑块 GUI 的启动代码已注释，需要外部节点提供 `/joint_states`。若只做手动展示，可在另一终端运行 `ros2 run joint_state_publisher_gui joint_state_publisher_gui`；不要与 ros2_control 的关节状态广播器同时发布同一组关节状态。若 RViz2 未显示模型，将 `Fixed Frame` 设置为 `base_link`，再添加 `RobotModel` 显示项。
@@ -98,7 +98,7 @@ ros2 launch two_link_arm_description display.launch.py
 确保已有 `/joint_states` 输入（来自手动展示或下节的 ros2_control 模拟硬件），在另一个已加载工作空间环境的终端执行：
 
 ```bash
-ros2 run two_link_arm_kinematics kinematics_monitor
+ros2 run three_link_arm_kinematics kinematics_monitor
 ```
 
 节点订阅：
@@ -138,20 +138,20 @@ ros2 topic pub --once /desired_cartesian_velocity geometry_msgs/msg/Twist \
 在已加载环境的终端 A 启动控制器与 RViz2（该启动文件已包含 `robot_state_publisher`，不必同时运行 `display.launch.py`）：
 
 ```bash
-ros2 launch two_link_arm_description ros2_control.launch.py
+ros2 launch three_link_arm_description ros2_control.launch.py
 ```
 
 在终端 B 确认 `joint_state_broadcaster` 和 `joint_trajectory_controller` 均为 `active`，然后先启动监控器：
 
 ```bash
 ros2 control list_controllers
-ros2 run two_link_arm_kinematics trajectory_monitor
+ros2 run three_link_arm_kinematics trajectory_monitor
 ```
 
 在终端 C 启动轨迹生成器：
 
 ```bash
-ros2 run two_link_arm_kinematics trajectory_generator
+ros2 run three_link_arm_kinematics trajectory_generator
 ```
 
 生成器启动约 1 秒后只发布一次 `trajectory_msgs/msg/JointTrajectory`，目标话题为 `/joint_trajectory_controller/joint_trajectory`；消息包含关节名称、位置、速度、加速度和各点的 `time_from_start`。监控器应先启动，以便接收这条一次性发布的轨迹。需要重发时重新启动生成器。
@@ -166,6 +166,20 @@ ros2 run two_link_arm_kinematics trajectory_generator
 `trajectory_monitor` 同时订阅期望轨迹和 `/joint_states`，以消息时间戳对齐轨迹时间，在相邻轨迹点之间线性插值期望位置，按关节名称重排反馈位置，每 `0.2 s` 输出 `q_des - q_actual` 及其范数。该监控器采用位置线性插值，其结果不应视为控制器内部插值误差的精确复现。
 
 `kinematics_monitor.py` 仍保留大量三次、五次及同步轨迹的历史注释代码，相关启动实验和轨迹发布器当前均已注释；实际轨迹生成与发布由独立的 `trajectory_generator` 节点承担。
+
+### 5. 动力学与关节空间控制实验
+
+`three_link_arm_kinematics` 还提供 `dynamics_monitor`、`joint_space_control_monitor` 和 `computed_torque_control_monitor` 三个命令。启动上一节的 ros2_control 模拟硬件和轨迹生成器后，可分别在新终端运行：
+
+```bash
+ros2 run three_link_arm_kinematics dynamics_monitor
+ros2 run three_link_arm_kinematics joint_space_control_monitor
+ros2 run three_link_arm_kinematics computed_torque_control_monitor
+```
+
+`dynamics_monitor` 从关节状态和轨迹消息计算动力学量；`joint_space_control_monitor` 以 100 Hz 计算关节空间控制结果。两者用于观察和记录实验结果。`computed_torque_control_monitor` 以 100 Hz 计算力矩并发布 `std_msgs/msg/Float64MultiArray` 到 `/joint_effort_command`。当前 `controllers.yaml` 使用位置命令接口，因此该力矩话题不会直接驱动这里的轨迹控制器；不要把它当成已接通的力矩控制闭环。
+
+动力学计算集中在 `dynamics_model.py`，`manual_tests/` 包含重力、质量矩阵、速度项和关节空间控制的手动实验脚本。`joint_dynamics_simulator.py` 当前为空文件，尚无可运行的仿真节点。
 
 ## 测试
 
@@ -183,8 +197,8 @@ ros2_ws/
 │   └── finite_difference_velocity_reference.py
 └── src/
     ├── my_turtle_launch/
-    ├── two_link_arm_description/
-    └── two_link_arm_kinematics/
+    ├── three_link_arm_description/
+    └── three_link_arm_kinematics/
 ```
 
 `reference/finite_difference_velocity_reference.py` 是带角度展开、时间间隔检查和低通滤波的差分速度参考实现，不会被当前节点自动加载。`build/`、`install/` 和 `log/` 是 `colcon` 生成目录，已通过 `.gitignore` 排除，不需要提交到仓库。

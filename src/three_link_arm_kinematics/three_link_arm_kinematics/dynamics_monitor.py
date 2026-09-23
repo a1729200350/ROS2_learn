@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory
-from two_link_arm_kinematics.dynamics_model import (DynamicsModel)
+from three_link_arm_kinematics.dynamics_model import (DynamicsModel)
 class DynamicsMonitor(Node):
 
   def __init__(self):

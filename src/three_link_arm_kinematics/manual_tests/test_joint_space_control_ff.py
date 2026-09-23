@@ -1,8 +1,8 @@
 import numpy as np
 # import rclpy
-# from two_link_arm_kinematics.dynamics_monitor import DynamicsMonitor
-from two_link_arm_kinematics.dynamics_model import DynamicsModel
-from two_link_arm_kinematics.joint_space_controller import (JointSpaceController)
+# from three_link_arm_kinematics.dynamics_monitor import DynamicsMonitor
+from three_link_arm_kinematics.dynamics_model import DynamicsModel
+from three_link_arm_kinematics.joint_space_controller import (JointSpaceController)
 if __name__ == '__main__':
   # #DynamicsMonitor 是 ROS2 Node，所以先初始化 ROS2
   # rclpy.init()

@@ -33,8 +33,9 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory
-from two_link_arm_kinematics.joint_space_controller import (JointSpaceController)
-from two_link_arm_kinematics.dynamics_model import (DynamicsModel)
+from std_msgs.msg import Float64MultiArray
+from three_link_arm_kinematics.joint_space_controller import (JointSpaceController)
+from three_link_arm_kinematics.dynamics_model import (DynamicsModel)
 class ComputedTorqueControlMonitor(Node):
   def __init__(self):
     super().__init__(
@@ -56,6 +57,12 @@ class ComputedTorqueControlMonitor(Node):
     self.q_dot_d_traj = None
     self.q_ddot_d_traj = None
     self.start_time = None
+    # 初始化publisher
+    self.tau_pub = self.create_publisher(
+      Float64MultiArray,
+      '/joint_effort_command',
+      10
+    )
     # ROS2 订阅
     self.create_subscription(
       JointState,
@@ -312,6 +319,11 @@ class ComputedTorqueControlMonitor(Node):
       q_dot_d,
       q_ddot_d
     )
+
+    #发布 τ
+    msg = Float64MultiArray()
+    msg.data = tau_total.tolist()
+    self.tau_pub.publish(msg)
 
     self.log_counter += 1
 
