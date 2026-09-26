@@ -16,7 +16,7 @@
 
 - Ubuntu 24.04 或 WSL2 Ubuntu
 - ROS 2 Jazzy
-- Python 3、NumPy、SciPy、OSQP
+- Python 3、NumPy、SciPy、OSQP；离线分析 CSV 还需要 pandas
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
 - ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`
 
@@ -46,7 +46,7 @@ rosdep install --from-paths src --ignore-src -r -y
 ```bash
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-python -m pip install numpy scipy osqp
+python -m pip install numpy scipy osqp pandas
 ```
 
 `.venv/` 仅用于本机运行环境，不需要提交到仓库。
@@ -179,7 +179,27 @@ ros2 run three_link_arm_kinematics computed_torque_control_monitor
 
 `dynamics_monitor` 从关节状态和轨迹消息计算动力学量；`joint_space_control_monitor` 以 100 Hz 计算关节空间控制结果。两者用于观察和记录实验结果。`computed_torque_control_monitor` 以 100 Hz 计算力矩并发布 `std_msgs/msg/Float64MultiArray` 到 `/joint_effort_command`。当前 `controllers.yaml` 使用位置命令接口，因此该力矩话题不会直接驱动这里的轨迹控制器；不要把它当成已接通的力矩控制闭环。
 
-动力学计算集中在 `dynamics_model.py`，`manual_tests/` 包含重力、质量矩阵、速度项和关节空间控制的手动实验脚本。`joint_dynamics_simulator.py` 当前为空文件，尚无可运行的仿真节点。
+动力学计算集中在 `dynamics_model.py`，`manual_tests/` 包含重力、质量矩阵、速度项和关节空间控制的手动实验脚本。
+
+### 6. 独立关节动力学仿真与跟踪数据分析
+
+`joint_dynamics_simulator` 从 `/joint_effort_command` 接收三个关节的力矩，按 `dynamics_model.py` 的模型以 `0.01 s` 步长积分，并发布 `/joint_states`。它只在收到首条有效力矩后开始积分；力矩命令超过 `0.1 s` 未更新时会暂停积分，本轮节点不会自动恢复。此节点是独立的软件动力学实验，不要与上一节的 ros2_control 模拟硬件同时向 `/joint_states` 发布状态。
+
+```bash
+ros2 run three_link_arm_kinematics joint_dynamics_simulator
+```
+
+`trajectory_tracking_analyzer` 订阅 `/joint_states`、`/joint_trajectory_controller/joint_trajectory` 和 `/joint_effort_command`，每 `0.01 s` 将时间、实际/期望关节位置、误差和力矩写入启动目录下的 `tracking_data.csv`。它按轨迹点的 `time_from_start` 对期望位置线性插值；使用前请确认状态、轨迹和力矩来源一致。该脚本以写入模式打开 CSV，重新运行会覆盖启动目录中的同名文件。
+
+```bash
+ros2 run three_link_arm_kinematics trajectory_tracking_analyzer
+```
+
+仓库根目录包含一份现有的 `tracking_data.csv` 实验记录。离线分析脚本不是 ROS 2 命令行入口；在工作空间根目录运行，使用 pandas 输出三个关节在运动阶段（`0–2.5 s`）、稳态阶段（`>3 s`）的最大/RMS 跟踪误差，以及最大力矩：
+
+```bash
+python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking_error.py
+```
 
 ## 测试
 
@@ -193,6 +213,7 @@ colcon test-result --verbose
 ```text
 ros2_ws/
 ├── README.md
+├── tracking_data.csv
 ├── reference/
 │   └── finite_difference_velocity_reference.py
 └── src/

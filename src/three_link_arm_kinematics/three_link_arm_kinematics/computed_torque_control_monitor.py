@@ -57,6 +57,7 @@ class ComputedTorqueControlMonitor(Node):
     self.q_dot_d_traj = None
     self.q_ddot_d_traj = None
     self.start_time = None
+
     # 初始化publisher
     self.tau_pub = self.create_publisher(
       Float64MultiArray,
@@ -197,6 +198,7 @@ class ComputedTorqueControlMonitor(Node):
       *
       1e-9
     )
+
     self.get_logger().info(
       '\n'
       '========== 收到计算力矩轨迹 ==========\n'
@@ -276,6 +278,7 @@ class ComputedTorqueControlMonitor(Node):
     )
     t = now - self.start_time
     desired = self.sample_trajectory(t)
+
     if desired is None:
       return
     (
@@ -345,7 +348,7 @@ class ComputedTorqueControlMonitor(Node):
       # f'tau_total = {tau_total} N*m'
 
       '\n'
-      '========== Classical Computed Torque ==========\n'
+      '========== 经典 计算力矩控制 ==========\n'
       f't = {t:.3f}s\n\n'
       f'q = {self.q}\n'
       f'q_d = {q_d}\n\n'
@@ -356,23 +359,12 @@ class ComputedTorqueControlMonitor(Node):
       f'tau_total = {tau_total} N*m'
     )
 
-
-
 def main(args=None):
-
   rclpy.init(args=args)
-
   node = ComputedTorqueControlMonitor()
-
   rclpy.spin(node)
-
-
   node.destroy_node()
-
   rclpy.shutdown()
 
-
-
 if __name__ == '__main__':
-
   main()
