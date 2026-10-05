@@ -64,6 +64,12 @@ class ComputedTorqueControlMonitor(Node):
       '/joint_effort_command',
       10
     )
+    # 发布本次控制计算的数据，供分析器直接记录
+    self.tracking_pub = self.create_publisher(
+      Float64MultiArray,  
+      '/computed_torque_tracking',
+      10
+    )
     # ROS2 订阅
     self.create_subscription(
       JointState,
@@ -328,8 +334,21 @@ class ComputedTorqueControlMonitor(Node):
     msg.data = tau_total.tolist()
     self.tau_pub.publish(msg)
 
-    self.log_counter += 1
+    # 发布同一次控制计算的数据
+    # 数据顺序：
+    # t, q(3), q_d(3), e(3), tau_total(3)
+    tracking_msg = Float64MultiArray()
+    tracking_msg.data = [
+      float(t),
+      *self.q.tolist(),
+      *q_d.tolist(),
+      *e.tolist(),
+      *tau_total.tolist(),
+    ]
+    self.tracking_pub.publish(tracking_msg)
 
+
+    self.log_counter += 1
     if self.log_counter < 50:
       return
 

@@ -16,7 +16,7 @@
 
 - Ubuntu 24.04 或 WSL2 Ubuntu
 - ROS 2 Jazzy
-- Python 3、NumPy、SciPy、OSQP；离线分析 CSV 还需要 pandas
+- Python 3、NumPy、SciPy、OSQP；离线分析 CSV 与绘图还需要 pandas、Matplotlib
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
 - ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`
 
@@ -46,7 +46,7 @@ rosdep install --from-paths src --ignore-src -r -y
 ```bash
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-python -m pip install numpy scipy osqp pandas
+python -m pip install numpy scipy osqp pandas matplotlib
 ```
 
 `.venv/` 仅用于本机运行环境，不需要提交到仓库。
@@ -189,17 +189,23 @@ ros2 run three_link_arm_kinematics computed_torque_control_monitor
 ros2 run three_link_arm_kinematics joint_dynamics_simulator
 ```
 
-`trajectory_tracking_analyzer` 订阅 `/joint_states`、`/joint_trajectory_controller/joint_trajectory` 和 `/joint_effort_command`，每 `0.01 s` 将时间、实际/期望关节位置、误差和力矩写入启动目录下的 `tracking_data.csv`。它按轨迹点的 `time_from_start` 对期望位置线性插值；使用前请确认状态、轨迹和力矩来源一致。该脚本以写入模式打开 CSV，重新运行会覆盖启动目录中的同名文件。
+`computed_torque_control_monitor` 在发布力矩的同一次控制计算中，还会向 `/computed_torque_tracking` 发布 `std_msgs/msg/Float64MultiArray`。消息依次包含 13 个数值：`t, q1, q2, q3, qd1, qd2, qd3, e1, e2, e3, tau1, tau2, tau3`，其中时间、期望位置和误差均由控制器提供。
+
+`trajectory_tracking_analyzer` 现在只订阅 `/computed_torque_tracking`，收到一条有效消息就向启动目录下的 `tracking_data.csv` 写入一行并刷新文件；长度不是 13 或包含 NaN/Inf 的消息会被拒绝。旧的独立计时、轨迹插值和定时记录代码保留为注释，当前不会执行。退出时会关闭 CSV 文件。该脚本以写入模式打开 CSV，重新运行会覆盖启动目录中的同名文件。
 
 ```bash
 ros2 run three_link_arm_kinematics trajectory_tracking_analyzer
 ```
+
+记录完整实验时，先启动记录器、动力学仿真器和计算力矩节点，再启动轨迹生成器。记录频率取决于控制器实际发布消息的频率，控制器定时周期为 `0.01 s`。
 
 仓库根目录包含一份现有的 `tracking_data.csv` 实验记录。离线分析脚本不是 ROS 2 命令行入口；在工作空间根目录运行，使用 pandas 输出三个关节在运动阶段（`0–2.5 s`）、稳态阶段（`>3 s`）的最大/RMS 跟踪误差，以及最大力矩：
 
 ```bash
 python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking_error.py
 ```
+
+脚本还使用 Matplotlib 显示 5 张图：三个关节各自的位置跟踪对比图、三个关节共用的误差图和力矩图。当前调用 `plt.show()` 显示窗口，不会自动保存图片；交互查看需要可用的图形显示环境。运动/稳态分界时间在脚本中固定，分析其他轨迹前应核对这些时间是否适用。
 
 ## 测试
 
