@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `my_turtle_launch` | `ament_python` | 同时启动两个带命名空间的 `turtlesim` 节点，分别使用红色和蓝色背景 |
 | `three_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz 启动文件及 ros2_control 模拟硬件、关节状态广播器和轨迹控制器配置 |
-| `three_link_arm_kinematics` | `ament_python` | 提供运动学、动力学、关节空间控制监视及轨迹生成与监控节点 |
+| `three_link_arm_kinematics` | `ament_python` | 提供运动学、动力学、关节空间控制监视、轨迹生成与监控节点，以及操作空间控制计算模块与手动实验 |
 
 三连杆模型的连杆长度为 `L1 = 0.5 m`、`L2 = 0.4 m`、`L3 = 0.4 m`，与 URDF 和运动学节点中的参数一致。
 
@@ -179,6 +179,8 @@ ros2 run three_link_arm_kinematics computed_torque_control_monitor
 
 `dynamics_monitor` 从关节状态和轨迹消息计算动力学量；`joint_space_control_monitor` 以 100 Hz 计算关节空间控制结果。两者用于观察和记录实验结果。`computed_torque_control_monitor` 以 100 Hz 计算力矩并发布 `std_msgs/msg/Float64MultiArray` 到 `/joint_effort_command`。当前 `controllers.yaml` 使用位置命令接口，因此该力矩话题不会直接驱动这里的轨迹控制器；不要把它当成已接通的力矩控制闭环。
 
+当前 `computed_torque_control_monitor` 的关节控制增益在源码中设置为 `kp = [10, 10, 10]`、`kd = [4.43, 4.43, 4.43]`，尚未暴露为 ROS 参数。
+
 动力学计算集中在 `dynamics_model.py`，`manual_tests/` 包含重力、质量矩阵、速度项和关节空间控制的手动实验脚本。
 
 ### 6. 独立关节动力学仿真与跟踪数据分析
@@ -199,13 +201,44 @@ ros2 run three_link_arm_kinematics trajectory_tracking_analyzer
 
 记录完整实验时，先启动记录器、动力学仿真器和计算力矩节点，再启动轨迹生成器。记录频率取决于控制器实际发布消息的频率，控制器定时周期为 `0.01 s`。
 
-仓库根目录包含一份现有的 `tracking_data.csv` 实验记录。离线分析脚本不是 ROS 2 命令行入口；在工作空间根目录运行，使用 pandas 输出三个关节在运动阶段（`0–2.5 s`）、稳态阶段（`>3 s`）的最大/RMS 跟踪误差，以及最大力矩：
+仓库根目录包含 `tracking_data.csv` 和 `tracking_kd_2.csv` 两份实验数据；当前两者内容相同。CSV 本身未记录控制增益，不能仅凭当前源码参数判断数据采集时的增益。离线分析脚本固定读取 `tracking_data.csv`，不是 ROS 2 命令行入口；在工作空间根目录运行，使用 pandas 输出三个关节在运动阶段（`0–2.5 s`）、稳态阶段（`>3 s`）的最大/RMS 跟踪误差，以及最大力矩：
 
 ```bash
 python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking_error.py
 ```
 
 脚本还使用 Matplotlib 显示 5 张图：三个关节各自的位置跟踪对比图、三个关节共用的误差图和力矩图。当前调用 `plt.show()` 显示窗口，不会自动保存图片；交互查看需要可用的图形显示环境。运动/稳态分界时间在脚本中固定，分析其他轨迹前应核对这些时间是否适用。
+
+### 7. 操作空间运动学、动力学与控制实验
+
+以下模块以平面三连杆机械臂的末端位置 `[x, y]` 为二维任务，不包含末端姿态控制：
+
+| 模块 | 当前实现 |
+| --- | --- |
+| `operational_space_kinematics.py` | 正运动学、`J`、解析 `J_dot`，以及 `x_dot = J q_dot`、`x_ddot = J q_ddot + J_dot q_dot` |
+| `operational_space_controller.py` | 任务空间前馈加速度加 PD 反馈，通过 Moore-Penrose 伪逆将修正后的任务加速度映射到关节加速度；默认 `kp = (10, 10)`、`kd = (4.43, 4.43)` |
+| `operational_space_dynamics.py` | 操作空间惯量 `Lambda`、动态一致广义逆 `J_bar`、偏差项 `mu`/`p`、任务力及 `tau = J.T @ F`，以及动态一致零空间投影 `N`/`N.T` |
+
+这些是 NumPy 计算类，目前没有独立的 ROS 2 节点入口，也未接入前述计算力矩节点的运行流程。操作空间惯量计算使用直接线性求解，要求 `J M^-1 J.T` 可逆；当前没有奇异构型阻尼处理。
+
+`manual_tests/` 中提供以下离线数值实验，使用脚本内固定的关节状态并打印结果：
+
+| 脚本 | 实验内容 |
+| --- | --- |
+| `test_operational_space_kinematics.py` | 用有限差分核对 `J_dot` 和末端加速度 |
+| `test_operational_space_controller.py` | 任务空间 PD 加速度命令与关节加速度映射 |
+| `test_operational_space_inverse_dynamics.py` | 关节逆动力学、加速度恢复和动力学方程残差 |
+| `test_operational_space_dynamics.py` | 操作空间惯量、动态一致广义逆与普通伪逆对比 |
+| `test_operational_space_bias.py` | 操作空间偏差项、任务力与加速度恢复 |
+| `test_dynamic_null_space.py` | 投影幂等性、`J N = 0`、`J M^-1 N.T = 0` 及零空间力矩实验 |
+
+在工作空间根目录运行，例如：
+
+```bash
+PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematics/manual_tests/test_operational_space_kinematics.py
+```
+
+将命令末尾文件名替换为表中其他脚本即可运行对应实验。它们目前主要打印数值供检查，不等同于带断言的自动化测试，也不验证 ROS 闭环或硬件运行。
 
 ## 测试
 
@@ -220,6 +253,7 @@ colcon test-result --verbose
 ros2_ws/
 ├── README.md
 ├── tracking_data.csv
+├── tracking_kd_2.csv
 ├── reference/
 │   └── finite_difference_velocity_reference.py
 └── src/

@@ -44,7 +44,7 @@ class ComputedTorqueControlMonitor(Node):
     # PD 控制器
     self.controller = JointSpaceController(
       kp=[10.0, 10.0, 10.0],
-      kd=[2.0, 2.0, 2.0]
+      kd=[4.43, 4.43, 4.43]
     )
     # 动力学模型
     self.dynamics = DynamicsModel()
