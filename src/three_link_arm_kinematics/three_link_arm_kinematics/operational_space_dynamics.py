@@ -5,9 +5,13 @@ from .dynamics_model import (DynamicsModel,)
 class OperationalSpaceDynamics:
   """平面3R机械臂的操作空间动力学量."""
 
-  def __init__(self):
+  def __init__(self,dynamics=None):
     self.kinematics = (OperationalSpaceKinematics())
-    self.dynamics = (DynamicsModel())
+    self.dynamics = (
+      DynamicsModel()
+        if dynamics is None
+        else dynamics
+      )
   
   def calculate_operational_inertia(self, q,):
     """

@@ -217,7 +217,7 @@ python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking
 | --- | --- |
 | `operational_space_kinematics.py` | 正运动学、`J`、解析 `J_dot`，以及 `x_dot = J q_dot`、`x_ddot = J q_ddot + J_dot q_dot` |
 | `operational_space_controller.py` | 任务空间前馈加速度加 PD 反馈，通过 Moore-Penrose 伪逆将修正后的任务加速度映射到关节加速度；默认 `kp = (10, 10)`、`kd = (4.43, 4.43)` |
-| `operational_space_dynamics.py` | 操作空间惯量 `Lambda`、动态一致广义逆 `J_bar`、偏差项 `mu`/`p`、任务力及 `tau = J.T @ F`，以及动态一致零空间投影 `N`/`N.T` |
+| `operational_space_dynamics.py` | 操作空间惯量 `Lambda`、动态一致广义逆 `J_bar`、偏差项 `mu`/`p`、任务力及 `tau = J.T @ F`，以及动态一致零空间投影 `N`/`N.T`；可通过 `dynamics` 参数传入动力学模型，省略时使用默认模型 |
 
 这些是 NumPy 计算类，目前没有独立的 ROS 2 节点入口，也未接入前述计算力矩节点的运行流程。操作空间惯量计算使用直接线性求解，要求 `J M^-1 J.T` 可逆；当前没有奇异构型阻尼处理。
 
@@ -230,7 +230,7 @@ python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking
 | `test_operational_space_inverse_dynamics.py` | 关节逆动力学、加速度恢复和动力学方程残差 |
 | `test_operational_space_dynamics.py` | 操作空间惯量、动态一致广义逆与普通伪逆对比 |
 | `test_operational_space_bias.py` | 操作空间偏差项、任务力与加速度恢复 |
-| `test_dynamic_null_space.py` | 投影幂等性、`J N = 0`、`J M^-1 N.T = 0` 及零空间力矩实验 |
+| `test_dynamic_null_space.py` | 投影幂等性、`J N = 0`、`J M^-1 N.T = 0`、主任务叠加零空间力矩，以及零空间姿态 PD 控制后的任务加速度核对 |
 
 在工作空间根目录运行，例如：
 
@@ -239,6 +239,28 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 ```
 
 将命令末尾文件名替换为表中其他脚本即可运行对应实验。它们目前主要打印数值供检查，不等同于带断言的自动化测试，也不验证 ROS 闭环或硬件运行。
+
+### 8. 操作空间闭环、模型误差与奇异点实验
+
+`manual_tests/` 新增连续离线仿真实验，使用半隐式欧拉积分。默认仿真时长为 `4 s`，前 `2 s` 使用五次时间缩放移动末端，之后保持终点；动力学积分步长为 `1 ms`，两次控制更新之间保持上一条力矩。
+
+| 脚本 | 当前实验 |
+| --- | --- |
+| `test_operational_space_closed_loop_simulation.py` | 在相同初始状态下比较 `2 / 5 / 10 / 20 ms` 控制周期，输出任务误差、最大力矩及关节速度，并绘制误差范数对比图 |
+| `test_operational_space_model_mismatch.py` | 控制器使用标称模型，仿真机器人采用标称参数或将第二连杆质量、惯量增加 `10%`；分别开启/关闭零空间姿态任务，共四组对比，并输出最终状态、最小奇异值和最大关节速度 |
+| `test_operational_space_singularity.py` | 比较正常、较直、接近伸直和完全伸直初始构型，沿末端径向向内移动 `0.05 m`；初始 `sigma_min(J) < 1e-8` 时跳过严格逆求解，记录其余工况的误差、速度、力矩与最小奇异值 |
+
+`simulation_core.py` 为模型误差与奇异点实验提供公共 `run_osc_simulation()` 函数，将仿真机器人模型与控制器模型分开，并允许设置控制周期、积分步长、初始关节位置、目标位移及零空间姿态任务开关。它要求控制周期是积分步长的正整数倍，返回时间、误差、关节状态、力矩和最小奇异值数组。默认控制周期为 `2 ms`，默认末端位移为 `[0.05, -0.03] m`。
+
+在工作空间根目录运行：
+
+```bash
+PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematics/manual_tests/test_operational_space_closed_loop_simulation.py
+PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematics/manual_tests/test_operational_space_model_mismatch.py
+PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematics/manual_tests/test_operational_space_singularity.py
+```
+
+这些脚本打印指标并使用 Matplotlib 显示对比图，不会自动保存 CSV 或图片。无图形显示环境时，可在命令前加 `MPLBACKEND=Agg` 运行数值部分。奇异点实验会打印并跳过初始奇异或运行失败的工况；这属于边界探查，尚未加入阻尼逆或在线奇异性避让。这些实验验证离线模型中的行为，不代表 ROS 节点闭环或真实硬件验证。
 
 ## 测试
 
