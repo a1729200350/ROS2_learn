@@ -2,22 +2,23 @@ import numpy as np
 from three_link_arm_kinematics.dynamics_model import DynamicsModel
 from three_link_arm_kinematics.operational_space_controller import (OperationalSpaceController,)
 from three_link_arm_kinematics.operational_space_dynamics import (OperationalSpaceDynamics,)
-def sample_trajectory(t, duration, start, goal):
-  """二维末端五次时间缩放轨迹。"""
-  if t >= duration:
-    return goal.copy(), np.zeros(2), np.zeros(2)
-  r = t / duration
-  delta = goal - start
-  s = 10*r**3 - 15*r**4 + 6*r**5
-  s_dot = (30*r**2 - 60*r**3 + 30*r**4) / duration
-  s_ddot = (60*r - 180*r**2 + 120*r**3) / duration**2
+from three_link_arm_kinematics.task_space_trajectory import (sample_task_trajectory as sample_trajectory,)
 
-  return (
-    start + s * delta,
-    s_dot * delta,
-    s_ddot * delta,
-  )
+# def sample_trajectory(t, duration, start, goal):
+#   """二维末端五次时间缩放轨迹。"""
+#   if t >= duration:
+#     return goal.copy(), np.zeros(2), np.zeros(2)
+#   r = t / duration
+#   delta = goal - start
+#   s = 10*r**3 - 15*r**4 + 6*r**5
+#   s_dot = (30*r**2 - 60*r**3 + 30*r**4) / duration
+#   s_ddot = (60*r - 180*r**2 + 120*r**3) / duration**2
 
+#   return (
+#     start + s * delta,
+#     s_dot * delta,
+#     s_ddot * delta,
+#   )
 
 def run_osc_simulation( plant_model,
  controller_model=None,

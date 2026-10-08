@@ -1,14 +1,14 @@
 # ROS2_learn
 
-一个面向 ROS 2 入门与机械臂运动学实验的学习工作空间，包含双 `turtlesim`、三连杆机械臂 URDF/RViz、约束逆运动学、动力学，以及基于 ros2_control 模拟硬件的轨迹生成、执行与跟踪误差监控。
+一个面向 ROS 2 入门与机械臂运动学实验的学习工作空间，包含双 `turtlesim`、三连杆机械臂 URDF/RViz、约束逆运动学、动力学、操作空间控制与离线仿真，以及 ros2_control 模拟硬件和 Gazebo 模型配置。
 
 ## 功能包
 
 | 功能包 | 类型 | 内容 |
 | --- | --- | --- |
 | `my_turtle_launch` | `ament_python` | 同时启动两个带命名空间的 `turtlesim` 节点，分别使用红色和蓝色背景 |
-| `three_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz 启动文件及 ros2_control 模拟硬件、关节状态广播器和轨迹控制器配置 |
-| `three_link_arm_kinematics` | `ament_python` | 提供运动学、动力学、关节空间控制监视、轨迹生成与监控节点，以及操作空间控制计算模块与手动实验 |
+| `three_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz、ros2_control 模拟硬件与位置轨迹控制配置，以及 Gazebo 专用 URDF、启动文件和力矩控制器配置 |
+| `three_link_arm_kinematics` | `ament_python` | 运动学、动力学、关节空间控制、轨迹生成与监控，以及操作空间控制 ROS 2 节点、计算模块与离线实验 |
 
 三连杆模型的连杆长度为 `L1 = 0.5 m`、`L2 = 0.4 m`、`L3 = 0.4 m`，与 URDF 和运动学节点中的参数一致。
 
@@ -19,6 +19,7 @@
 - Python 3、NumPy、SciPy、OSQP；离线分析 CSV 与绘图还需要 pandas、Matplotlib
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
 - ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`
+- Gazebo 示例额外需要 `ros_gz_sim`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
 
 ## 获取代码与安装依赖
 
@@ -52,6 +53,8 @@ python -m pip install numpy scipy osqp pandas matplotlib
 `.venv/` 仅用于本机运行环境，不需要提交到仓库。
 
 运动学包已声明 `trajectory_msgs` 和 SciPy；QP 节点使用 OSQP，计算力矩节点使用 `std_msgs`，但依赖清单目前未显式列出这两项。请确认运行环境已安装并可导入它们。
+
+Gazebo 启动文件和 URDF 使用的 `ros_gz_sim`、`gz_ros2_control` 当前也未在描述包的依赖清单中显式声明，运行该示例前需单独确认环境具备这些包。
 
 ## 构建
 
@@ -133,7 +136,7 @@ ros2 topic pub --once /desired_cartesian_velocity geometry_msgs/msg/Twist \
 
 ### 4. ros2_control 轨迹执行与监控
 
-当前 URDF 使用 `mock_components/GenericSystem` 模拟硬件，不是 Gazebo 动力学仿真或真实机械臂驱动。`config/controllers.yaml` 将控制器管理器更新频率设为 `100 Hz`，三个关节使用位置命令接口及位置、速度状态接口。
+本节使用的 URDF 采用 `mock_components/GenericSystem` 模拟硬件，不是 Gazebo 动力学仿真或真实机械臂驱动。`config/controllers.yaml` 将控制器管理器更新频率设为 `100 Hz`，三个关节使用位置命令接口及位置、速度状态接口。Gazebo 专用配置见第 10 节。
 
 在已加载环境的终端 A 启动控制器与 RViz2（该启动文件已包含 `robot_state_publisher`，不必同时运行 `display.launch.py`）：
 
@@ -191,6 +194,8 @@ ros2 run three_link_arm_kinematics computed_torque_control_monitor
 ros2 run three_link_arm_kinematics joint_dynamics_simulator
 ```
 
+仿真器支持 ROS 参数 `initial_q`，默认为 `[0.0, 0.0, 0.0]`，必须包含三个有限关节角；初始关节速度为零。运行下文 OSC 实验时需要使用非奇异初始构型。
+
 `computed_torque_control_monitor` 在发布力矩的同一次控制计算中，还会向 `/computed_torque_tracking` 发布 `std_msgs/msg/Float64MultiArray`。消息依次包含 13 个数值：`t, q1, q2, q3, qd1, qd2, qd3, e1, e2, e3, tau1, tau2, tau3`，其中时间、期望位置和误差均由控制器提供。
 
 `trajectory_tracking_analyzer` 现在只订阅 `/computed_torque_tracking`，收到一条有效消息就向启动目录下的 `tracking_data.csv` 写入一行并刷新文件；长度不是 13 或包含 NaN/Inf 的消息会被拒绝。旧的独立计时、轨迹插值和定时记录代码保留为注释，当前不会执行。退出时会关闭 CSV 文件。该脚本以写入模式打开 CSV，重新运行会覆盖启动目录中的同名文件。
@@ -219,7 +224,7 @@ python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking
 | `operational_space_controller.py` | 任务空间前馈加速度加 PD 反馈，通过 Moore-Penrose 伪逆将修正后的任务加速度映射到关节加速度；默认 `kp = (10, 10)`、`kd = (4.43, 4.43)` |
 | `operational_space_dynamics.py` | 操作空间惯量 `Lambda`、动态一致广义逆 `J_bar`、偏差项 `mu`/`p`、任务力及 `tau = J.T @ F`，以及动态一致零空间投影 `N`/`N.T`；可通过 `dynamics` 参数传入动力学模型，省略时使用默认模型 |
 
-这些是 NumPy 计算类，目前没有独立的 ROS 2 节点入口，也未接入前述计算力矩节点的运行流程。操作空间惯量计算使用直接线性求解，要求 `J M^-1 J.T` 可逆；当前没有奇异构型阻尼处理。
+这些 NumPy 计算类由离线实验及新增的 `operational_space_control_monitor` ROS 2 节点使用；前述关节空间计算力矩节点仍使用其原有控制流程。操作空间惯量计算使用直接线性求解，要求 `J M^-1 J.T` 可逆；当前没有奇异构型阻尼处理。
 
 `manual_tests/` 中提供以下离线数值实验，使用脚本内固定的关节状态并打印结果：
 
@@ -262,6 +267,48 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 
 这些脚本打印指标并使用 Matplotlib 显示对比图，不会自动保存 CSV 或图片。无图形显示环境时，可在命令前加 `MPLBACKEND=Agg` 运行数值部分。奇异点实验会打印并跳过初始奇异或运行失败的工况；这属于边界探查，尚未加入阻尼逆或在线奇异性避让。这些实验验证离线模型中的行为，不代表 ROS 节点闭环或真实硬件验证。
 
+### 9. ROS 2 操作空间控制与实验录包
+
+`operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务力矩和动态一致零空间姿态 PD 力矩，并发布到 `/joint_effort_command`。它在首次有效反馈后建立末端起点，用 `2 s` 五次时间缩放移动 `[0.05, -0.03] m`，随后保持目标。
+
+`task_space_trajectory.py` 提供共用的 `sample_task_trajectory()` 函数，供该 ROS 节点与 `simulation_core.py` 使用：返回期望位置、速度和加速度，要求持续时间大于零，负时间按起点处理，轨迹结束后保持终点且期望速度、加速度为零。
+
+完成构建并加载环境后，在终端 A 启动独立动力学仿真器，设置非奇异初始构型：
+
+```bash
+ros2 run three_link_arm_kinematics joint_dynamics_simulator --ros-args -p initial_q:="[0.5, -0.8, 1.2]"
+```
+
+在终端 B 启动 OSC 节点：
+
+```bash
+ros2 run three_link_arm_kinematics operational_space_control_monitor
+```
+
+这个实验由 OSC 节点内部生成任务轨迹，无需 `trajectory_generator`。运行时只保留这一套状态源和力矩源，不要同时启动 ros2_control/Gazebo 状态发布器或另一个计算力矩节点。
+
+节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`。它在约 `4 s` 时打印一次误差及力矩统计，之后继续保持目标；现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
+
+当前保护条件包括反馈超过 `0.05 s` 未更新、`sigma_min(J) < 1e-6`、计算失败、非有限力矩或任一力矩绝对值超过 `100`。触发后节点锁定并停止发布，不会发送清零指令；独立动力学仿真器随后按其 `0.1 s` 命令超时机制暂停。轨迹计时和反馈超时使用 `time.monotonic()`，不跟随 Gazebo 的仿真时钟。
+
+仓库内 `osc_ros2_run1/` 保存一份 MCAP 实验录包及 `metadata.yaml`，约 `68.65 s`、共 `17,506` 条消息，仅包含 `/joint_states`、`/joint_effort_command` 和 `/osc_tracking`。可只读查看录包信息：
+
+```bash
+ros2 bag info osc_ros2_run1
+```
+
+### 10. Gazebo 模型与力矩接口配置
+
+`three_link_arm_gazebo.urdf` 包含世界固定基座、碰撞与惯性参数，并通过 `gz_ros2_control/GazeboSimSystem` 提供三个关节的 effort 命令接口和 position/velocity/effort 状态接口；初始关节位置配置为 `[0.5, -0.8, 1.2]`。
+
+`config/three_link_arm_controllers.yaml` 配置 `100 Hz` 控制器管理器、`joint_state_broadcaster` 和 `effort_controller`（`effort_controllers/JointGroupEffortController`），与第 4 节的位置轨迹控制配置分开。
+
+```bash
+ros2 launch three_link_arm_description three_link_arm_gazebo.launch.py
+```
+
+当前启动文件启动 Gazebo 空世界、`robot_state_publisher` 并生成模型，没有包含控制器 spawner、仿真时钟桥接或力矩话题重映射。OSC 默认输出 `/joint_effort_command`，而力矩控制器使用 `/effort_controller/commands`；还需明确连接这些接口并处理时钟行为，才能开展 Gazebo 闭环实验。模型生成不代表控制器已激活或闭环已验证。
+
 ## 测试
 
 ```bash
@@ -276,6 +323,9 @@ ros2_ws/
 ├── README.md
 ├── tracking_data.csv
 ├── tracking_kd_2.csv
+├── osc_ros2_run1/
+│   ├── metadata.yaml
+│   └── osc_ros2_run1_0.mcap
 ├── reference/
 │   └── finite_difference_velocity_reference.py
 └── src/

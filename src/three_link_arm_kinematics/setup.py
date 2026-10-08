@@ -32,6 +32,7 @@ setup(
           'computed_torque_control_monitor = three_link_arm_kinematics.computed_torque_control_monitor:main',
           'joint_dynamics_simulator = three_link_arm_kinematics.joint_dynamics_simulator:main',
           'trajectory_tracking_analyzer = three_link_arm_kinematics.trajectory_tracking_analyzer:main',
+          'operational_space_control_monitor = three_link_arm_kinematics.operational_space_control_monitor:main',
         ],
     },
 )

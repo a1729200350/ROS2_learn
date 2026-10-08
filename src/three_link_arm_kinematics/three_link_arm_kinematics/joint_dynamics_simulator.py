@@ -9,8 +9,14 @@ class JointDynamicsSimulator(Node):
     def __init__(self):
         super().__init__("joint_dynamics_simulator")
         self.model = DynamicsModel()
-        # 状态
-        self.q = np.zeros(3)
+
+        # # 状态
+        # self.q = np.zeros(3)
+        # self.q_dot = np.zeros(3)
+        self.declare_parameter("initial_q",[0.0, 0.0, 0.0],)
+        self.q = np.asarray(self.get_parameter("initial_q").value,dtype=float,)
+        if self.q.shape != (3,) or not np.all(np.isfinite(self.q)):
+            raise ValueError("initial_q 必须是三个有限的关节角")
         self.q_dot = np.zeros(3)
 
         # 力矩
