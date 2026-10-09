@@ -18,7 +18,7 @@
 - ROS 2 Jazzy
 - Python 3、NumPy、SciPy、OSQP；离线分析 CSV 与绘图还需要 pandas、Matplotlib
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
-- ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`、`std_srvs`
+- ros2_control、ros2_controllers、`controller_manager`、`controller_manager_msgs`、`trajectory_msgs`、`std_msgs`、`std_srvs`
 - Gazebo 示例额外需要 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
 
 ## 获取代码与安装依赖
@@ -52,7 +52,7 @@ python -m pip install numpy scipy osqp pandas matplotlib
 
 `.venv/` 仅用于本机运行环境，不需要提交到仓库。
 
-运动学包已声明 `trajectory_msgs` 和 SciPy；QP 节点使用 OSQP，力矩与跟踪消息使用 `std_msgs`，OSC 启动服务使用 `std_srvs`，但依赖清单目前未显式列出这三项。请确认运行环境已安装并可导入它们。
+运动学包已声明 `trajectory_msgs`、SciPy，以及 OSC 服务使用的 `std_srvs` 和自动激活使用的 `controller_manager_msgs`。QP 节点使用 OSQP，力矩与跟踪消息使用 `std_msgs`，但依赖清单目前未显式列出这两项。请确认运行环境已安装并可导入它们。
 
 Gazebo 启动文件和 URDF 使用的 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control` 当前也未在描述包的依赖清单中显式声明，运行该示例前需单独确认环境具备这些包。
 
@@ -271,7 +271,7 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 
 `operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务与零空间力矩，并发布到 `/joint_effort_command`。首次有效反馈且 ROS 时钟可用后，节点建立末端起点并进入保持模式；调用 `/osc_start` 后，才用 `2 s` 五次时间缩放移动 `[0.01, -0.006] m`，随后保持目标。等待服务调用期间仍会发布保持控制力矩。
 
-当前节点的动力学重力参数为 `g = 9.8`，零空间期望关节位置为 `[0.7, -0.8, 1.2]`，零空间原始力矩为 `G + Kp_posture (q_desired - q) - Kd_posture q_dot`，再经 `N.T` 投影。主任务增益为 `kp = (10, 10)`、`kd = (4.43, 4.43)`，姿态增益为 `Kp_posture = I`、`Kd_posture = 0.5 I`；这些参数目前在源码中设置。
+当前节点的动力学重力参数为 `g = 9.8`，零空间期望关节位置为 `[0.5, -0.8, 1.2]`，零空间原始力矩为 `G + Kp_posture (q_desired - q) - Kd_posture q_dot`，再经 `N.T` 投影。主任务增益为 `kp = (10, 10)`、`kd = (4.43, 4.43)`，姿态增益为 `Kp_posture = I`、`Kd_posture = 0.5 I`；这些参数目前在源码中设置。
 
 `task_space_trajectory.py` 提供共用的 `sample_task_trajectory()` 函数，供该 ROS 节点与 `simulation_core.py` 使用：返回期望位置、速度和加速度，要求持续时间大于零，负时间按起点处理，轨迹结束后保持终点且期望速度、加速度为零。
 
@@ -295,6 +295,8 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 服务返回 `success: true` 表示轨迹已启动；节点未就绪、处于故障状态或轨迹已经启动时会拒绝请求，同一次节点运行不支持再次触发轨迹。
 
+节点另提供 `/osc_ready`（`std_srvs/srv/Trigger`），供 Gazebo 自动激活流程检查就绪状态。它要求节点无故障、反馈及正常力矩已产生，反馈年龄不超过 `0.2 s`、正常力矩年龄不超过 `0.1 s`、轨迹尚未启动、各关节速度绝对值不超过 `0.1 rad/s`，且初始力矩绝对值不超过 `10 N·m`。检查失败时返回具体原因；该服务本身不激活控制器，也不启动轨迹。`/osc_start` 的回调没有复用这些完整就绪检查。
+
 这个实验由 OSC 节点内部生成任务轨迹，无需 `trajectory_generator`。运行时只保留这一套状态源和力矩源，不要同时启动 ros2_control/Gazebo 状态发布器或另一个计算力矩节点。
 
 节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`。等待启动时 `t = 0`；统计从成功触发轨迹后开始，在轨迹时间约 `4 s` 时打印一次误差及力矩统计，等待时间不计入 RMS，之后继续保持目标。现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
@@ -309,7 +311,7 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 ros2 bag info osc_ros2_run1
 ```
 
-### 10. Gazebo 模型与力矩接口配置
+### 10. Gazebo 模型与自动激活流程
 
 `three_link_arm_gazebo.urdf` 包含世界固定基座、碰撞与惯性参数，并通过 `gz_ros2_control/GazeboSimSystem` 提供三个关节的 effort 命令接口和 position/velocity/effort 状态接口；初始关节位置配置为 `[0.5, -0.8, 1.2]`。
 
@@ -321,7 +323,23 @@ URDF 还为 Gazebo 配置了 `link1`、`link2` 的红色材质和 `link3` 的绿
 ros2 launch three_link_arm_description three_link_arm_gazebo.launch.py
 ```
 
-当前启动文件启动 Gazebo 空世界、`robot_state_publisher` 并生成模型，同时使用 `ros_gz_bridge/parameter_bridge` 将 Gazebo 时钟单向桥接到 ROS `/clock`。启动文件仍未包含控制器 spawner 或力矩话题重映射。OSC 默认输出 `/joint_effort_command`，而力矩控制器使用 `/effort_controller/commands`；开展 Gazebo 闭环实验前还需激活控制器、连接力矩话题，并为 OSC 节点启用 `use_sim_time:=true`。模型生成和时钟桥接不代表控制器已激活或闭环已验证。
+启动文件启动 Gazebo 空世界和 `robot_state_publisher`，通过 `ros_gz_bridge/parameter_bridge` 将 Gazebo 时钟单向桥接到 ROS `/clock`，并按以下顺序组织后续节点：
+
+1. 模型生成进程成功退出后，启动 `joint_state_broadcaster` 的 spawner。
+2. 状态广播器 spawner 成功退出后，加载 `effort_controller`，先保持 `inactive`。
+3. 力矩控制器 spawner 成功退出后，同时启动 OSC 节点和 `osc_auto_activator`。OSC 自动设置 `use_sim_time: true`，并将 `/joint_effort_command` 重映射到 `/effort_controller/commands`。
+4. `osc_auto_activator` 等待 `/osc_ready` 检查通过，再通过 `/controller_manager/switch_controller` 以 `STRICT` 模式激活 `effort_controller`。
+
+两次 spawner 均配置了 `120 s` 的控制器管理器等待超时；前置进程非零退出时，不启动对应的下一步。自动激活节点的就绪等待期限为 `30 s`，切换请求的服务端超时为 `3 s`、客户端等待为 `5 s`；等待超时或切换失败会记录错误并退出，不会自动重试整个启动流程。
+
+自动激活只接通力矩控制器，不会调用 `/osc_start`。看到“effort_controller 自动激活成功”后，可先确认两个控制器均为 `active`，再手动触发轨迹：
+
+```bash
+ros2 control list_controllers
+ros2 service call /osc_start std_srvs/srv/Trigger "{}"
+```
+
+此启动文件已包含 OSC 节点及控制器启动流程，不需要再单独启动第 9 节的独立动力学仿真器或第二个 OSC 节点。源码中的启动顺序和就绪门槛不等于运行结果，是否成功激活仍需以本次日志和控制器状态为准。
 
 ## 测试
 

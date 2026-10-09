@@ -19,7 +19,7 @@ class OperationalSpaceControlMonitor(Node):
 
     # 姿态二级任务
     # self.q_posture_desired = np.zeros(3)
-    self.q_posture_desired = np.array([0.7, -0.8, 1.2],dtype=float)
+    self.q_posture_desired = np.array([0.5, -0.8, 1.2],dtype=float)
     self.Kp_posture = np.eye(3)
     self.Kd_posture = 0.5 * np.eye(3)
 
@@ -36,6 +36,10 @@ class OperationalSpaceControlMonitor(Node):
 
     # 故障标记：故障后不再输出控制力矩
     self.failed = False
+
+    # OSC 就绪检查
+    self.last_valid_effort_time = None
+    self.last_valid_effort = None
 
     # 数值边界保护
     self.min_sigma_threshold = 1e-6
@@ -56,34 +60,13 @@ class OperationalSpaceControlMonitor(Node):
     self.last_loop_dt = 0.0
     self.last_effort_publish_dt = 0.0
 
-    self.create_subscription(
-      JointState,
-      "/joint_states",
-      self.joint_state_callback,
-      10,
-    )
-    self.tau_pub = self.create_publisher(
-      Float64MultiArray,
-      "/joint_effort_command",
-      10,
-    )
-    self.tracking_pub = self.create_publisher(
-      Float64MultiArray,
-      "/osc_tracking",
-      10,
-    )
-    self.timer = self.create_timer(
-      0.01,
-      self.control_loop,
-    )
-    self.create_service(
-      Trigger,
-      "/osc_start",
-      self.start_trajectory_callback,
-    )
-    self.get_logger().info(
-      "OSC + Posture ROS2 控制节点已启动"
-    )
+    self.create_subscription(JointState,"/joint_states", self.joint_state_callback,10,)
+    self.tau_pub = self.create_publisher(Float64MultiArray,"/joint_effort_command", 10,)
+    self.tracking_pub = self.create_publisher( Float64MultiArray,"/osc_tracking",10,)
+    self.timer = self.create_timer(0.01, self.control_loop,)
+    self.create_service( Trigger,"/osc_start",self.start_trajectory_callback,)
+    self.create_service(Trigger,"/osc_ready", self.osc_ready_callback,)
+    self.get_logger().info( "OSC + Posture ROS2 控制节点已启动")
 
   def joint_state_callback(self, msg):
     names = ["joint1", "joint2", "joint3"]
@@ -112,6 +95,32 @@ class OperationalSpaceControlMonitor(Node):
       zero_msg.data = [0.0, 0.0, 0.0]
       self.tau_pub.publish(zero_msg)
       self.get_logger().error(reason)
+
+  def osc_ready_callback(self, request, response):
+    now = time.monotonic()
+    reason = None
+    if self.failed:
+      reason = "OSC 已进入故障状态"
+    elif (
+      self.q is None
+      or self.q_dot is None
+      or self.last_state_time is None
+      or self.last_valid_effort_time is None
+    ):
+      reason = "尚未收到完整反馈或有效力矩"
+    elif now - self.last_state_time > 0.2:
+      reason = "关节状态反馈不新鲜"
+    elif now - self.last_valid_effort_time > 0.1:
+      reason = "OSC 力矩输出不新鲜"
+    elif self.start_time is not None:
+      reason = "OSC 已经开始轨迹"
+    elif np.max(np.abs(self.q_dot)) > 0.1:
+      reason = "关节速度过大"
+    elif np.max(np.abs(self.last_valid_effort)) > 10.0:
+      reason = "初始力矩超过关节限制"
+    response.success = reason is None
+    response.message = reason or "OSC 已就绪"
+    return response
 
   def start_trajectory_callback(self, request, response):
     if self.failed or self.x_start is None:
@@ -214,9 +223,13 @@ class OperationalSpaceControlMonitor(Node):
     tau_msg.data = tau_total.tolist()
 
     # 给正常力矩发布加计时
+      # 仅统计 publish() 的耗时
     publish_start = time.monotonic()
     self.tau_pub.publish(tau_msg)
     self.last_effort_publish_dt = time.monotonic() - publish_start
+      # 记录最近一次正常发布的力矩，供就绪检查使用
+    self.last_valid_effort = tau_total.copy()
+    self.last_valid_effort_time = time.monotonic()
 
     # 当前末端误差
     x = command["x"]
