@@ -18,8 +18,8 @@
 - ROS 2 Jazzy
 - Python 3、NumPy、SciPy、OSQP；离线分析 CSV 与绘图还需要 pandas、Matplotlib
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
-- ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`
-- Gazebo 示例额外需要 `ros_gz_sim`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
+- ros2_control、ros2_controllers、`controller_manager`、`trajectory_msgs`、`std_msgs`、`std_srvs`
+- Gazebo 示例额外需要 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
 
 ## 获取代码与安装依赖
 
@@ -52,9 +52,9 @@ python -m pip install numpy scipy osqp pandas matplotlib
 
 `.venv/` 仅用于本机运行环境，不需要提交到仓库。
 
-运动学包已声明 `trajectory_msgs` 和 SciPy；QP 节点使用 OSQP，计算力矩节点使用 `std_msgs`，但依赖清单目前未显式列出这两项。请确认运行环境已安装并可导入它们。
+运动学包已声明 `trajectory_msgs` 和 SciPy；QP 节点使用 OSQP，力矩与跟踪消息使用 `std_msgs`，OSC 启动服务使用 `std_srvs`，但依赖清单目前未显式列出这三项。请确认运行环境已安装并可导入它们。
 
-Gazebo 启动文件和 URDF 使用的 `ros_gz_sim`、`gz_ros2_control` 当前也未在描述包的依赖清单中显式声明，运行该示例前需单独确认环境具备这些包。
+Gazebo 启动文件和 URDF 使用的 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control` 当前也未在描述包的依赖清单中显式声明，运行该示例前需单独确认环境具备这些包。
 
 ## 构建
 
@@ -269,7 +269,9 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 
 ### 9. ROS 2 操作空间控制与实验录包
 
-`operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务力矩和动态一致零空间姿态 PD 力矩，并发布到 `/joint_effort_command`。它在首次有效反馈后建立末端起点，用 `2 s` 五次时间缩放移动 `[0.05, -0.03] m`，随后保持目标。
+`operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务与零空间力矩，并发布到 `/joint_effort_command`。首次有效反馈且 ROS 时钟可用后，节点建立末端起点并进入保持模式；调用 `/osc_start` 后，才用 `2 s` 五次时间缩放移动 `[0.01, -0.006] m`，随后保持目标。等待服务调用期间仍会发布保持控制力矩。
+
+当前节点的动力学重力参数为 `g = 9.8`，零空间期望关节位置为 `[0.7, -0.8, 1.2]`，零空间原始力矩为 `G + Kp_posture (q_desired - q) - Kd_posture q_dot`，再经 `N.T` 投影。主任务增益为 `kp = (10, 10)`、`kd = (4.43, 4.43)`，姿态增益为 `Kp_posture = I`、`Kd_posture = 0.5 I`；这些参数目前在源码中设置。
 
 `task_space_trajectory.py` 提供共用的 `sample_task_trajectory()` 函数，供该 ROS 节点与 `simulation_core.py` 使用：返回期望位置、速度和加速度，要求持续时间大于零，负时间按起点处理，轨迹结束后保持终点且期望速度、加速度为零。
 
@@ -285,13 +287,23 @@ ros2 run three_link_arm_kinematics joint_dynamics_simulator --ros-args -p initia
 ros2 run three_link_arm_kinematics operational_space_control_monitor
 ```
 
+看到节点输出“OSC 保持模式”后，在另一个已加载环境的终端启动轨迹：
+
+```bash
+ros2 service call /osc_start std_srvs/srv/Trigger "{}"
+```
+
+服务返回 `success: true` 表示轨迹已启动；节点未就绪、处于故障状态或轨迹已经启动时会拒绝请求，同一次节点运行不支持再次触发轨迹。
+
 这个实验由 OSC 节点内部生成任务轨迹，无需 `trajectory_generator`。运行时只保留这一套状态源和力矩源，不要同时启动 ros2_control/Gazebo 状态发布器或另一个计算力矩节点。
 
-节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`。它在约 `4 s` 时打印一次误差及力矩统计，之后继续保持目标；现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
+节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`。等待启动时 `t = 0`；统计从成功触发轨迹后开始，在轨迹时间约 `4 s` 时打印一次误差及力矩统计，等待时间不计入 RMS，之后继续保持目标。现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
 
-当前保护条件包括反馈超过 `0.05 s` 未更新、`sigma_min(J) < 1e-6`、计算失败、非有限力矩或任一力矩绝对值超过 `100`。触发后节点锁定并停止发布，不会发送清零指令；独立动力学仿真器随后按其 `0.1 s` 命令超时机制暂停。轨迹计时和反馈超时使用 `time.monotonic()`，不跟随 Gazebo 的仿真时钟。
+当前保护条件包括反馈超过 `0.2 s` 未更新、`sigma_min(J) < 1e-6`、计算失败、非有限力矩或任一力矩绝对值超过 `100`。触发后节点锁定，立即发布 `[0, 0, 0]`，并在后续定时回调中继续发布零力矩，不会自动恢复。持续的零力矩消息不会触发独立动力学仿真器的命令超时暂停；零力矩也不等于保持关节姿态。
 
-仓库内 `osc_ros2_run1/` 保存一份 MCAP 实验录包及 `metadata.yaml`，约 `68.65 s`、共 `17,506` 条消息，仅包含 `/joint_states`、`/joint_effort_command` 和 `/osc_tracking`。可只读查看录包信息：
+轨迹时间使用节点的 ROS 时钟；Gazebo 实验需设置 `use_sim_time:=true` 并确保 `/clock` 桥接有效，独立软件仿真默认使用系统时间。反馈超时及耗时诊断仍采用 `time.monotonic()`。超时日志包含反馈年龄、回调间隔、上一轮完整控制耗时和上一轮力矩发布耗时。
+
+仓库内 `osc_ros2_run1/` 保存一份历史 MCAP 实验录包及 `metadata.yaml`，约 `68.65 s`、共 `17,506` 条消息，仅包含 `/joint_states`、`/joint_effort_command` 和 `/osc_tracking`。该录包未随本次控制逻辑更新而重新采集。可只读查看录包信息：
 
 ```bash
 ros2 bag info osc_ros2_run1
@@ -301,13 +313,15 @@ ros2 bag info osc_ros2_run1
 
 `three_link_arm_gazebo.urdf` 包含世界固定基座、碰撞与惯性参数，并通过 `gz_ros2_control/GazeboSimSystem` 提供三个关节的 effort 命令接口和 position/velocity/effort 状态接口；初始关节位置配置为 `[0.5, -0.8, 1.2]`。
 
+URDF 还为 Gazebo 配置了 `link1`、`link2` 的红色材质和 `link3` 的绿色材质。
+
 `config/three_link_arm_controllers.yaml` 配置 `100 Hz` 控制器管理器、`joint_state_broadcaster` 和 `effort_controller`（`effort_controllers/JointGroupEffortController`），与第 4 节的位置轨迹控制配置分开。
 
 ```bash
 ros2 launch three_link_arm_description three_link_arm_gazebo.launch.py
 ```
 
-当前启动文件启动 Gazebo 空世界、`robot_state_publisher` 并生成模型，没有包含控制器 spawner、仿真时钟桥接或力矩话题重映射。OSC 默认输出 `/joint_effort_command`，而力矩控制器使用 `/effort_controller/commands`；还需明确连接这些接口并处理时钟行为，才能开展 Gazebo 闭环实验。模型生成不代表控制器已激活或闭环已验证。
+当前启动文件启动 Gazebo 空世界、`robot_state_publisher` 并生成模型，同时使用 `ros_gz_bridge/parameter_bridge` 将 Gazebo 时钟单向桥接到 ROS `/clock`。启动文件仍未包含控制器 spawner 或力矩话题重映射。OSC 默认输出 `/joint_effort_command`，而力矩控制器使用 `/effort_controller/commands`；开展 Gazebo 闭环实验前还需激活控制器、连接力矩话题，并为 OSC 节点启用 `use_sim_time:=true`。模型生成和时钟桥接不代表控制器已激活或闭环已验证。
 
 ## 测试
 

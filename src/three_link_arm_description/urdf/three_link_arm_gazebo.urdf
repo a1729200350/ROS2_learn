@@ -214,6 +214,34 @@
     <origin xyz="0.4 0 0" rpy="0 0 0"/>
   </joint>
   
+  <!-- link1：红色 -->
+  <gazebo reference="link1">
+    <visual>
+      <material>
+        <ambient>0.8 0.1 0.1 1</ambient>
+        <diffuse>1.0 0.1 0.1 1</diffuse>
+      </material>
+    </visual>
+  </gazebo>
+  <!-- link2：红色 -->
+  <gazebo reference="link2">
+    <visual>
+      <material>
+        <ambient>0.8 0.1 0.1 1</ambient>
+        <diffuse>1.0 0.1 0.1 1</diffuse>
+      </material>
+    </visual>
+  </gazebo>
+  <!-- link3：绿色，保留原来的区分 -->
+  <gazebo reference="link3">
+    <visual>
+      <material>
+        <ambient>0.1 0.7 0.1 1</ambient>
+        <diffuse>0.1 1.0 0.1 1</diffuse>
+      </material>
+    </visual>
+  </gazebo>
+
   <!-- Gazebo ros2_control 配置 -->
   <ros2_control name="GazeboSimSystem" type="system">
     <hardware>
@@ -258,4 +286,5 @@
       </parameters>
     </plugin>
   </gazebo>
+
 </robot>
