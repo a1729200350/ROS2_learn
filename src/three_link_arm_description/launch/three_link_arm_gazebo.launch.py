@@ -1,4 +1,5 @@
 import os
+from launch.actions import ExecuteProcess
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.event_handlers import OnProcessExit
@@ -9,6 +10,7 @@ def generate_launch_description():
   description_share = get_package_share_directory( "three_link_arm_description")
   gazebo_share = get_package_share_directory("ros_gz_sim")
   urdf_path = os.path.join( description_share, "urdf", "three_link_arm_gazebo.urdf",)
+  osc_params_path = os.path.join(description_share,"config","osc_params.yaml",)
   with open(urdf_path, "r", encoding="utf-8") as file:
     robot_description = file.read()
   # 将 URDF 中的 ROS 包路径替换为绝对路径
@@ -72,7 +74,10 @@ def generate_launch_description():
     package="three_link_arm_kinematics",
     executable="operational_space_control_monitor",
     output="screen",
-    parameters=[{"use_sim_time": True}],
+    parameters=[
+      osc_params_path,
+      {"use_sim_time": True}
+    ],
     remappings=[
       (
         "/joint_effort_command",
@@ -86,10 +91,21 @@ def generate_launch_description():
     output="screen",
   )
 
+  # 独立 OSC 故障监控程序
+  osc_watchdog = ExecuteProcess(
+    cmd=[
+      "/usr/bin/python3",
+      "-u",
+      os.path.expanduser("~/ros2_ws/scripts/osc_controller_state_watch.py"),
+    ],
+    output="screen",
+  )
+
   return LaunchDescription([
     gazebo,
     clock_bridge,
     robot_state_publisher,
+    osc_watchdog,
     # 注册启动顺序
     # 模型生成成功后，启动关节状态广播器
     RegisterEventHandler(OnProcessExit(target_action=spawn_robot,on_exit=lambda event, context:([joint_state_spawner] if event.returncode == 0 else []),)),

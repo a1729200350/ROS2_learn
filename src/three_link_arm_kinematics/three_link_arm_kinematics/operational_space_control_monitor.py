@@ -13,15 +13,38 @@ from three_link_arm_kinematics.task_space_trajectory import (sample_task_traject
 class OperationalSpaceControlMonitor(Node):
   def __init__(self):
     super().__init__("operational_space_control_monitor")
-    self.controller = OperationalSpaceController( kp=(10.0, 10.0), kd=(4.43, 4.43),)
-    self.osc = OperationalSpaceDynamics()
-    self.osc.dynamics.g = 9.8
 
-    # 姿态二级任务
-    # self.q_posture_desired = np.zeros(3)
-    self.q_posture_desired = np.array([0.5, -0.8, 1.2],dtype=float)
-    self.Kp_posture = np.eye(3)
-    self.Kd_posture = 0.5 * np.eye(3)
+    # 读取 ROS2 控制参数
+    task_kp = tuple(self.declare_parameter("task_kp", [10.0, 10.0]).value)
+    task_kd = tuple( self.declare_parameter("task_kd", [4.43, 4.43]).value)
+    gravity = self.declare_parameter("gravity", 9.8).value
+    posture_target = self.declare_parameter("posture_target", [0.5, -0.8, 1.2]).value
+    posture_kp = self.declare_parameter("posture_kp", 1.0).value
+    posture_kd = self.declare_parameter("posture_kd", 0.5).value
+    trajectory_delta = self.declare_parameter("trajectory_delta", [0.01, -0.006]).value
+    self.move_duration = float(self.declare_parameter("move_duration", 2.0).value)
+    # 初始化 OSC
+    self.controller = OperationalSpaceController( kp= task_kp, kd=task_kd,)
+    self.osc = OperationalSpaceDynamics()
+    self.osc.dynamics.g = float(gravity)
+    # 零空间姿态任务
+    self.q_posture_desired = np.array(posture_target, dtype=float)
+    self.Kp_posture = float(posture_kp) * np.eye(3)
+    self.Kd_posture = float(posture_kd) * np.eye(3)
+    # 末端轨迹位移
+    self.trajectory_delta = np.array(trajectory_delta, dtype=float)
+
+    # 三个关节的最大允许力矩
+    self.torque_limit = np.array(self.declare_parameter("torque_limit", [10.0, 10.0, 10.0]).value,dtype=float,)
+    # 检查力矩限制配置
+    if (
+      self.torque_limit.shape != (3,)
+      or not np.all(np.isfinite(self.torque_limit))
+      or np.any(self.torque_limit <= 0)
+    ):
+      raise ValueError("torque_limit 配置无效")
+    # 限制饱和警告的打印频率
+    self.last_clip_log_time = float("-inf")
 
     # 当前实际关节状态
     self.q = None
@@ -32,7 +55,6 @@ class OperationalSpaceControlMonitor(Node):
     self.start_time = None
     self.x_start = None
     self.x_goal = None
-    self.move_duration = 2.0
 
     # 故障标记：故障后不再输出控制力矩
     self.failed = False
@@ -40,6 +62,9 @@ class OperationalSpaceControlMonitor(Node):
     # OSC 就绪检查
     self.last_valid_effort_time = None
     self.last_valid_effort = None
+    
+    # 最近一次未经裁剪的原始力矩
+    self.last_raw_effort = None
 
     # 数值边界保护
     self.min_sigma_threshold = 1e-6
@@ -116,8 +141,12 @@ class OperationalSpaceControlMonitor(Node):
       reason = "OSC 已经开始轨迹"
     elif np.max(np.abs(self.q_dot)) > 0.1:
       reason = "关节速度过大"
-    elif np.max(np.abs(self.last_valid_effort)) > 10.0:
-      reason = "初始力矩超过关节限制"
+    elif self.last_raw_effort is None:
+      reason = "尚未得到原始力矩"
+    elif np.any(
+      np.abs(self.last_raw_effort) > self.torque_limit
+    ):
+      reason = "初始需求力矩超过关节限制"
     response.success = reason is None
     response.message = reason or "OSC 已就绪"
     return response
@@ -182,7 +211,7 @@ class OperationalSpaceControlMonitor(Node):
       # 第一次收到有效状态时，确定末端初始位置
       if self.x_start is None:
           self.x_start = kin.forward_kinematics(q)
-          self.x_goal = (self.x_start + np.array([0.01, -0.006]))
+          self.x_goal = self.x_start + self.trajectory_delta
           self.get_logger().info( f"OSC 保持模式，末端初始位置：{self.x_start}")
       # 未启动轨迹时，始终保持 t=0 的目标
       if self.start_time is None:
@@ -218,6 +247,16 @@ class OperationalSpaceControlMonitor(Node):
       self.stop_on_error("仿真力矩超过异常值保护阈值")
       return
 
+    # 最终执行器力矩限制
+    tau_raw = tau_total.copy()
+    tau_total = np.clip(tau_raw, -self.torque_limit, self.torque_limit,)
+    # 仅在发生饱和时记录，最多每秒打印一次
+    if np.any(tau_raw != tau_total):
+      now_log = time.monotonic()
+      if now_log - self.last_clip_log_time >= 1.0:
+        self.get_logger().warn(f"力矩饱和 | 原始={tau_raw}, 限幅后={tau_total}")
+        self.last_clip_log_time = now_log
+
     # 发布关节力矩
     tau_msg = Float64MultiArray()
     tau_msg.data = tau_total.tolist()
@@ -227,6 +266,8 @@ class OperationalSpaceControlMonitor(Node):
     publish_start = time.monotonic()
     self.tau_pub.publish(tau_msg)
     self.last_effort_publish_dt = time.monotonic() - publish_start
+    # 记录未经裁剪的原始需求力矩
+    self.last_raw_effort = tau_raw.copy()
       # 记录最近一次正常发布的力矩，供就绪检查使用
     self.last_valid_effort = tau_total.copy()
     self.last_valid_effort_time = time.monotonic()

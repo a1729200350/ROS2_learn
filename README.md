@@ -12,6 +12,15 @@
 
 三连杆模型的连杆长度为 `L1 = 0.5 m`、`L2 = 0.4 m`、`L3 = 0.4 m`，与 URDF 和运动学节点中的参数一致。
 
+## 文档导航
+
+| 目录文档 | 适合查看的内容 |
+| --- | --- |
+| [模型、启动与参数](src/three_link_arm_description/README.md) | 三种启动方式、控制器配置和 OSC 参数表 |
+| [运动学与控制功能包](src/three_link_arm_kinematics/README.md) | ROS 节点入口、计算模块、跟踪消息字段和实验边界 |
+| [辅助脚本](scripts/README.md) | 控制器状态监视、故障暂停条件和录包绘图 |
+| [OSC 实验记录](osc_records/README.md) | 两组 MCAP 数据、话题统计和已保存的曲线 |
+
 ## 环境
 
 - Ubuntu 24.04 或 WSL2 Ubuntu
@@ -24,9 +33,12 @@
 ## 获取代码与安装依赖
 
 ```bash
-git clone git@github.com:a1729200350/ROS2_learn.git
-cd ROS2_learn
+cd ~
+git clone git@github.com:a1729200350/ROS2_learn.git ros2_ws
+cd ros2_ws
 ```
+
+当前 Gazebo 启动文件通过固定路径 `~/ros2_ws/scripts/osc_controller_state_watch.py` 启动监视脚本，绘图脚本也固定读取 `~/ros2_ws/osc_records/baseline_01`，因此上面的目录名称与位置有实际意义。已有工作空间不必重新克隆；使用其他路径时需先核对这两处路径假设。
 
 首次使用 `rosdep` 时，需要先完成系统级初始化：
 
@@ -206,7 +218,7 @@ ros2 run three_link_arm_kinematics trajectory_tracking_analyzer
 
 记录完整实验时，先启动记录器、动力学仿真器和计算力矩节点，再启动轨迹生成器。记录频率取决于控制器实际发布消息的频率，控制器定时周期为 `0.01 s`。
 
-仓库根目录包含 `tracking_data.csv` 和 `tracking_kd_2.csv` 两份实验数据；当前两者内容相同。CSV 本身未记录控制增益，不能仅凭当前源码参数判断数据采集时的增益。离线分析脚本固定读取 `tracking_data.csv`，不是 ROS 2 命令行入口；在工作空间根目录运行，使用 pandas 输出三个关节在运动阶段（`0–2.5 s`）、稳态阶段（`>3 s`）的最大/RMS 跟踪误差，以及最大力矩：
+仓库当前不再附带根目录的旧 `tracking_data.csv` 和 `tracking_kd_2.csv`，历史版本仍可在 Git 提交记录中查看。以下离线分析脚本固定读取启动目录中的 `tracking_data.csv`，需要先用记录器生成数据；CSV 本身未记录控制增益，不能仅凭当前源码参数判断采集时的增益。脚本不是 ROS 2 命令行入口；在工作空间根目录运行，使用 pandas 输出三个关节在运动阶段（`0–2.5 s`）、稳态阶段（`>3 s`）的最大/RMS 跟踪误差，以及最大力矩：
 
 ```bash
 python3 src/three_link_arm_kinematics/three_link_arm_kinematics/analyze_tracking_error.py
@@ -271,7 +283,9 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 
 `operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务与零空间力矩，并发布到 `/joint_effort_command`。首次有效反馈且 ROS 时钟可用后，节点建立末端起点并进入保持模式；调用 `/osc_start` 后，才用 `2 s` 五次时间缩放移动 `[0.01, -0.006] m`，随后保持目标。等待服务调用期间仍会发布保持控制力矩。
 
-当前节点的动力学重力参数为 `g = 9.8`，零空间期望关节位置为 `[0.5, -0.8, 1.2]`，零空间原始力矩为 `G + Kp_posture (q_desired - q) - Kd_posture q_dot`，再经 `N.T` 投影。主任务增益为 `kp = (10, 10)`、`kd = (4.43, 4.43)`，姿态增益为 `Kp_posture = I`、`Kd_posture = 0.5 I`；这些参数目前在源码中设置。
+节点已将重力、主任务/姿态增益、姿态目标、末端位移、轨迹时长和逐关节力矩限制暴露为启动时 ROS 参数。[OSC 参数表](src/three_link_arm_description/README.md#osc-启动参数)列出了当前配置；Gazebo 启动会自动加载 `config/osc_params.yaml`，直接 `ros2 run` 不会自动加载该文件。参数在构造节点时读取，当前没有控制参数热更新回调。
+
+默认动力学重力参数为 `g = 9.8`，零空间期望关节位置为 `[0.5, -0.8, 1.2]`，零空间原始力矩为 `G + Kp_posture (q_desired - q) - Kd_posture q_dot`，再经 `N.T` 投影。主任务增益默认为 `kp = (10, 10)`、`kd = (4.43, 4.43)`，姿态增益为 `Kp_posture = I`、`Kd_posture = 0.5 I`。
 
 `task_space_trajectory.py` 提供共用的 `sample_task_trajectory()` 函数，供该 ROS 节点与 `simulation_core.py` 使用：返回期望位置、速度和加速度，要求持续时间大于零，负时间按起点处理，轨迹结束后保持终点且期望速度、加速度为零。
 
@@ -281,10 +295,11 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 ros2 run three_link_arm_kinematics joint_dynamics_simulator --ros-args -p initial_q:="[0.5, -0.8, 1.2]"
 ```
 
-在终端 B 启动 OSC 节点：
+在终端 B 的工作空间根目录启动 OSC 节点：
 
 ```bash
-ros2 run three_link_arm_kinematics operational_space_control_monitor
+ros2 run three_link_arm_kinematics operational_space_control_monitor --ros-args \
+  --params-file src/three_link_arm_description/config/osc_params.yaml
 ```
 
 看到节点输出“OSC 保持模式”后，在另一个已加载环境的终端启动轨迹：
@@ -295,13 +310,15 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 服务返回 `success: true` 表示轨迹已启动；节点未就绪、处于故障状态或轨迹已经启动时会拒绝请求，同一次节点运行不支持再次触发轨迹。
 
-节点另提供 `/osc_ready`（`std_srvs/srv/Trigger`），供 Gazebo 自动激活流程检查就绪状态。它要求节点无故障、反馈及正常力矩已产生，反馈年龄不超过 `0.2 s`、正常力矩年龄不超过 `0.1 s`、轨迹尚未启动、各关节速度绝对值不超过 `0.1 rad/s`，且初始力矩绝对值不超过 `10 N·m`。检查失败时返回具体原因；该服务本身不激活控制器，也不启动轨迹。`/osc_start` 的回调没有复用这些完整就绪检查。
+节点另提供 `/osc_ready`（`std_srvs/srv/Trigger`），供 Gazebo 自动激活流程检查就绪状态。它要求节点无故障、反馈及正常力矩已产生，反馈年龄不超过 `0.2 s`、正常力矩年龄不超过 `0.1 s`、轨迹尚未启动、各关节速度绝对值不超过 `0.1 rad/s`，且未经限幅的原始需求力矩均不超过对应的 `torque_limit`（默认每关节 `10 N·m`）。因此，限幅后的输出处于范围内不代表已就绪。检查失败时返回具体原因；该服务本身不激活控制器，也不启动轨迹。`/osc_start` 的回调没有复用这些完整就绪检查。
 
 这个实验由 OSC 节点内部生成任务轨迹，无需 `trajectory_generator`。运行时只保留这一套状态源和力矩源，不要同时启动 ros2_control/Gazebo 状态发布器或另一个计算力矩节点。
 
-节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`。等待启动时 `t = 0`；统计从成功触发轨迹后开始，在轨迹时间约 `4 s` 时打印一次误差及力矩统计，等待时间不计入 RMS，之后继续保持目标。现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
+节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`；[字段索引](src/three_link_arm_kinematics/README.md#osc-接口)供离线读取使用。`tau` 为实际发布的限幅后力矩指令，不是原始需求力矩，也不是测量力矩。等待启动时 `t = 0`；统计从成功触发轨迹后开始，在轨迹时间约 `4 s` 时打印一次误差及力矩统计，等待时间不计入 RMS，之后继续保持目标。现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
 
 当前保护条件包括反馈超过 `0.2 s` 未更新、`sigma_min(J) < 1e-6`、计算失败、非有限力矩或任一力矩绝对值超过 `100`。触发后节点锁定，立即发布 `[0, 0, 0]`，并在后续定时回调中继续发布零力矩，不会自动恢复。持续的零力矩消息不会触发独立动力学仿真器的命令超时暂停；零力矩也不等于保持关节姿态。
+
+上述异常值检查通过后，节点才将各关节力矩裁剪到 `[-torque_limit, +torque_limit]`，饱和警告最多每秒打印一次。`100 N·m` 异常值阈值与可配置的执行器限幅是两层不同检查；超过前者会锁定故障，不会仅靠限幅继续运行。
 
 轨迹时间使用节点的 ROS 时钟；Gazebo 实验需设置 `use_sim_time:=true` 并确保 `/clock` 桥接有效，独立软件仿真默认使用系统时间。反馈超时及耗时诊断仍采用 `time.monotonic()`。超时日志包含反馈年龄、回调间隔、上一轮完整控制耗时和上一轮力矩发布耗时。
 
@@ -310,6 +327,8 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 ```bash
 ros2 bag info osc_ros2_run1
 ```
+
+新增的 `osc_records/` 保存 `baseline_01`、`saturation_01` 两组录包和三张基线曲线，详见[实验记录说明](osc_records/README.md)。这些数据包含 `/effort_controller/commands`，与上述历史录包的力矩话题不同；目录名称和当前 YAML 配置不能单独证明录制时的实际参数。
 
 ### 10. Gazebo 模型与自动激活流程
 
@@ -327,7 +346,7 @@ ros2 launch three_link_arm_description three_link_arm_gazebo.launch.py
 
 1. 模型生成进程成功退出后，启动 `joint_state_broadcaster` 的 spawner。
 2. 状态广播器 spawner 成功退出后，加载 `effort_controller`，先保持 `inactive`。
-3. 力矩控制器 spawner 成功退出后，同时启动 OSC 节点和 `osc_auto_activator`。OSC 自动设置 `use_sim_time: true`，并将 `/joint_effort_command` 重映射到 `/effort_controller/commands`。
+3. 力矩控制器 spawner 成功退出后，同时启动 OSC 节点和 `osc_auto_activator`。OSC 加载描述包中的 `config/osc_params.yaml`，设置 `use_sim_time: true`，并将 `/joint_effort_command` 重映射到 `/effort_controller/commands`。
 4. `osc_auto_activator` 等待 `/osc_ready` 检查通过，再通过 `/controller_manager/switch_controller` 以 `STRICT` 模式激活 `effort_controller`。
 
 两次 spawner 均配置了 `120 s` 的控制器管理器等待超时；前置进程非零退出时，不启动对应的下一步。自动激活节点的就绪等待期限为 `30 s`，切换请求的服务端超时为 `3 s`、客户端等待为 `5 s`；等待超时或切换失败会记录错误并退出，不会自动重试整个启动流程。
@@ -341,6 +360,8 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 此启动文件已包含 OSC 节点及控制器启动流程，不需要再单独启动第 9 节的独立动力学仿真器或第二个 OSC 节点。源码中的启动顺序和就绪门槛不等于运行结果，是否成功激活仍需以本次日志和控制器状态为准。
 
+启动文件还会独立启动 `scripts/osc_controller_state_watch.py`。监视器只在观察到 `effort_controller` 激活后进入保护阶段：随后控制器失去 `active`、从未收到跟踪消息且激活已超过 `2 s`，或已收到的 `/osc_tracking` 中断超过 `0.5 s`，都会触发一次故障锁定并请求暂停 Gazebo 的 `empty` 世界，再读取世界状态确认暂停。它不自动恢复或重新激活控制器；完整条件、路径依赖和暂停失败日志见[辅助脚本说明](scripts/README.md)。
+
 ## 测试
 
 ```bash
@@ -353,8 +374,17 @@ colcon test-result --verbose
 ```text
 ros2_ws/
 ├── README.md
-├── tracking_data.csv
-├── tracking_kd_2.csv
+├── scripts/
+│   ├── README.md
+│   ├── osc_controller_state_watch.py
+│   └── plot_osc_error.py
+├── osc_records/
+│   ├── README.md
+│   ├── baseline_01/
+│   ├── saturation_01/
+│   ├── baseline_01_error.png
+│   ├── baseline_01_torque.png
+│   └── baseline_01_velocity.png
 ├── osc_ros2_run1/
 │   ├── metadata.yaml
 │   └── osc_ros2_run1_0.mcap
@@ -362,8 +392,8 @@ ros2_ws/
 │   └── finite_difference_velocity_reference.py
 └── src/
     ├── my_turtle_launch/
-    ├── three_link_arm_description/
-    └── three_link_arm_kinematics/
+    ├── three_link_arm_description/   # README、launch、config、urdf
+    └── three_link_arm_kinematics/    # README、节点、计算模块与实验
 ```
 
 `reference/finite_difference_velocity_reference.py` 是带角度展开、时间间隔检查和低通滤波的差分速度参考实现，不会被当前节点自动加载。`build/`、`install/` 和 `log/` 是 `colcon` 生成目录，已通过 `.gitignore` 排除，不需要提交到仓库。
