@@ -17,11 +17,12 @@
 
 | 目录文档 | 适合查看的内容 |
 | --- | --- |
-| [模型、启动与参数](src/three_link_arm_description/README.md) | 三种启动方式、控制器配置和 OSC 参数表 |
+| [模型、启动与参数](src/three_link_arm_description/README.md) | 显示、mock、OSC/JTC Gazebo 启动方式、控制器配置和 OSC 参数表 |
 | [运动学与控制功能包](src/three_link_arm_kinematics/README.md) | ROS 节点入口、计算模块、跟踪消息字段和实验边界 |
 | [MoveIt 配置](src/three_link_arm_moveit_config/README.md) | `arm` 规划组、`home` 姿态、位置轨迹接口及当前限制 |
-| [辅助脚本](scripts/README.md) | 控制器状态监视、故障暂停条件和基线/周期录包绘图 |
+| [辅助脚本](scripts/README.md) | 控制器状态监视、OSC 绘图与 MoveIt/JTC 录包分析 |
 | [OSC 实验记录](osc_records/README.md) | 四组 MCAP 数据、实际记录时长和已保存的曲线 |
+| [MoveIt/JTC 实验记录](jtc_records/README.md) | 三组关节轨迹跟踪录包、曲线与已有分析摘要 |
 
 ## 环境
 
@@ -32,6 +33,7 @@
 - ros2_control、ros2_controllers、`controller_manager`、`controller_manager_msgs`、`trajectory_msgs`、`std_msgs`、`std_srvs`
 - Gazebo 示例额外需要 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
 - MoveIt 配置包另声明了 `moveit_configs_utils`、规划/可视化组件、Setup Assistant 和 `xacro` 等依赖，见该包的 `package.xml`
+- JTC 离线分析额外读取 `control_msgs/msg/JointTrajectoryControllerState`，需要 `control_msgs`、`rosbag2_py`、MCAP 插件、NumPy 和 Matplotlib
 
 ## 获取代码与安装依赖
 
@@ -369,15 +371,25 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 ### 11. 独立 Gazebo JTC 与 MoveIt 配置
 
-新增的位置型 JTC 实验由 `three_link_arm_jtc_gazebo.urdf` 与 `three_link_arm_jtc_controllers.yaml` 配套使用。其启动文件当前位于双层 `launch/launch/` 目录；从工作空间根目录、完成构建并加载环境后，可按实际文件路径启动：
+位置型 JTC 实验由 `three_link_arm_jtc_gazebo.urdf` 与 `three_link_arm_jtc_controllers.yaml` 配套使用。启动文件现已移至描述包正常的 `launch/` 目录；完成构建并加载环境后，可按功能包名称启动：
 
 ```bash
-ros2 launch src/three_link_arm_description/launch/launch/three_link_arm_jtc.launch.py
+ros2 launch three_link_arm_description three_link_arm_jtc.launch.py
 ```
 
 该入口依次生成模型、启动状态广播器，再以 `--inactive` 加载 `joint_trajectory_controller`，不自动激活或发送轨迹；也不启动 OSC、OSC 自动激活器或状态监视脚本。保持未激活是当前脚本的明确安排，不能仅凭 launch 启动就宣称轨迹执行已就绪。详见[模型与启动说明](src/three_link_arm_description/README.md#独立-gazebo-jtc-实验)。
 
-新增 `three_link_arm_moveit_config` 定义 `arm_base → tool0` 的 `arm` 规划组、`home = [0.5, -0.8, 1.2]` 命名姿态和 `FollowJointTrajectory` 控制器映射。它包含 `move_group`、RViz、状态发布与 Setup Assistant 的组件入口，但目前没有统一 `demo.launch.py`，`kinematics.yaml` 为空映射，生成的控制 Xacro 使用 mock 硬件而不是 Gazebo 系统。配置内容、入口及集成边界见[MoveIt README](src/three_link_arm_moveit_config/README.md)；这些文件本身不证明规划与 Gazebo 执行已联通。
+JTC 专用 URDF 现在将 Gazebo ros2_control 插件的 `position_proportional_gain` 设为 `0.2`；这不是 OSC 的任务增益。MoveIt 关节限制现已为三个关节启用 `1.0 rad/s²` 加速度上限，速度上限仍为 `2.0 rad/s`，配置中的默认速度/加速度缩放均为 `0.1`。
+
+`three_link_arm_moveit_config` 定义 `arm_base → tool0` 的 `arm` 规划组、`home = [0.5, -0.8, 1.2]` 命名姿态和 `FollowJointTrajectory` 控制器映射。新增专门面向 Gazebo 的规划组件入口，可在另一已加载环境的终端运行：
+
+```bash
+ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
+```
+
+该入口只启动 `move_group`，使用仿真时间、允许轨迹执行并发布规划场景，同时禁用 MoveIt 自动管理控制器；它不会新建控制器管理器或替你激活 JTC。执行前仍需通过独立流程确认 JTC 已为 `active`，不应再重复启动普通 `move_group.launch.py`。RViz 也不包含在这个入口中。
+
+目前仍没有统一 `demo.launch.py`，`kinematics.yaml` 为空映射，生成的控制 Xacro 使用 mock 硬件而不是 Gazebo 系统。配置内容、入口及集成边界见[MoveIt README](src/three_link_arm_moveit_config/README.md)。仓库现有三组 JTC 参考/反馈录包和已有曲线，见[实验记录](jtc_records/README.md)；它们可用于检查记录中的跟踪情况，但本次文档更新没有重新运行 Gazebo 或验证每次规划动作的成功状态。
 
 ## 测试
 
@@ -395,7 +407,12 @@ ros2_ws/
 │   ├── README.md
 │   ├── osc_controller_state_watch.py
 │   ├── plot_osc_error.py
-│   └── plot_osc_periodic.py
+│   ├── plot_osc_periodic.py
+│   └── analyze_moveit_jtc_bag.py
+├── jtc_records/
+│   ├── README.md
+│   ├── moveit_jtc_*/           # 三组 MCAP 录包
+│   └── *_analysis*/           # 已保存曲线；另有一份分析文本
 ├── osc_records/
 │   ├── README.md
 │   ├── baseline_01/

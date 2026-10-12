@@ -67,3 +67,27 @@ python3 scripts/plot_osc_periodic.py
 | `periodic_01_velocity.png` | 三关节速度，rad/s |
 
 运行或导入此脚本都会执行顶层绘图并覆盖同名图片。仓库已经保存了四张图，可直接在[实验记录页](../osc_records/README.md#已保存的周期曲线)查看；本目录说明不将文件名或当前参数当成采集时的参数证明。
+
+## MoveIt/JTC 录包分析
+
+[`analyze_moveit_jtc_bag.py`](analyze_moveit_jtc_bag.py) 从命令行接收一个录包目录，读取 `/joint_trajectory_controller/controller_state`（`control_msgs/msg/JointTrajectoryControllerState`）。它使用 JTC 同一条消息中的参考与反馈，不依赖分别对齐 `/joint_states` 和外部轨迹，也不回放录包。
+
+加载 ROS 2 环境并具备 `control_msgs`、`rosbag2_py`、MCAP 插件、NumPy 和 Matplotlib 后，从工作空间根目录运行，例如：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+python3 scripts/analyze_moveit_jtc_bag.py \
+  jtc_records/moveit_jtc_gain020_speed020_20261012_155117
+```
+
+脚本会创建或使用录包旁的 `<录包名>_analysis/` 目录，并覆盖其中的 `joint_positions.png`、`joint_errors.png`；已在源码中选择 `Agg` 后端，不需要图形窗口。数值结果打印到终端，当前不会自动保存分析文本。
+
+分析规则：
+
+- 用控制器状态的 `header.stamp` 建立时间轴，要求时间严格递增、关节顺序不变，且至少有两条有效状态；参考/反馈位置长度不匹配的记录跳过。
+- 误差为 `reference.positions - feedback.positions`。期望速度数组缺失或长度不匹配时按零补齐，仍可通过参考位置变化识别运动。
+- 任一关节的期望速度绝对值超过 `1e-4`，或相邻参考位置变化超过 `1e-7` 时视为运动；选取第一至最后运动样本，并按中位采样间隔在前后各保留约 `0.2 s`。多个运动段之间的停留也会包含在这个窗口内。
+- 输出该窗口内的逐关节 RMS、最大绝对误差（rad）及 RMS（deg），并绘制参考/反馈位置和误差；RMS 按样本计算，不是时间加权积分。
+- 在速度足够大的样本上拟合 `误差 ≈ 等效滞后 × 参考速度`，报告拟合滞后与残差 RMS；不足十个有效样本时不拟合。该值是等效跟踪滞后，不是独立测量的通信或调度延迟。
+
+若录包没有有效控制器状态、时间不递增或未检测到期望运动，脚本会报错。现有录包、图片和已保存文本见[JTC 实验记录](../jtc_records/README.md)，查看它们不需要重新运行分析脚本。

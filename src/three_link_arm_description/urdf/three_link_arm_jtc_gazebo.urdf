@@ -284,6 +284,9 @@
       <parameters>
         $(find three_link_arm_description)/config/three_link_arm_jtc_controllers.yaml
       </parameters>
+      <position_proportional_gain>
+        0.2
+      </position_proportional_gain>
     </plugin>
   </gazebo>
 
