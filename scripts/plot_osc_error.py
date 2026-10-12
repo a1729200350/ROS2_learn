@@ -5,8 +5,8 @@ import rosbag2_py
 from rclpy.serialization import deserialize_message
 from std_msgs.msg import Float64MultiArray
 bag_path = Path.home() / "ros2_ws/osc_records/baseline_01"
-reader = rosbag2_py.SequentialReader()
 
+reader = rosbag2_py.SequentialReader()
 reader.open(
     rosbag2_py.StorageOptions( uri=str(bag_path),storage_id="mcap",),
     rosbag2_py.ConverterOptions( input_serialization_format="cdr", output_serialization_format="cdr",),
@@ -18,6 +18,7 @@ errors_x = []
 errors_y = []
 torques = []
 joint_velocities = []
+
 while reader.has_next():
     topic, data, timestamp = reader.read_next()
     if topic != "/osc_tracking":

@@ -23,6 +23,12 @@ class OperationalSpaceControlMonitor(Node):
     posture_kd = self.declare_parameter("posture_kd", 0.5).value
     trajectory_delta = self.declare_parameter("trajectory_delta", [0.01, -0.006]).value
     self.move_duration = float(self.declare_parameter("move_duration", 2.0).value)
+    # 轨迹模式参数
+    if not np.isfinite(self.move_duration) or self.move_duration <= 0.0:
+      raise ValueError("move_duration 必须为正且有限")
+    self.trajectory_mode = str(self.declare_parameter("trajectory_mode", "single").value).lower()
+    if self.trajectory_mode not in ("single", "periodic"):
+      raise ValueError("trajectory_mode 只支持 single 或 periodic")
     # 初始化 OSC
     self.controller = OperationalSpaceController( kp= task_kp, kd=task_kd,)
     self.osc = OperationalSpaceDynamics()
@@ -219,7 +225,20 @@ class OperationalSpaceControlMonitor(Node):
       else:
         t = max(0.0, now - self.start_time)
 
-      x_d, x_dot_d, x_ddot_d = (sample_task_trajectory(t,self.move_duration, self.x_start,self.x_goal,))
+      # 周期性五次多项式往返：各段边界的位置、速度、加速度连续
+      if self.trajectory_mode == "periodic":
+        cycle_t = t % (2.0 * self.move_duration)
+        if cycle_t < self.move_duration:
+          x_d, x_dot_d, x_ddot_d = sample_task_trajectory(cycle_t, self.move_duration, self.x_start, self.x_goal)
+        else:
+          x_d, x_dot_d, x_ddot_d = sample_task_trajectory(
+            cycle_t - self.move_duration,
+            self.move_duration,
+            self.x_goal,
+            self.x_start,
+          )
+      else:
+        x_d, x_dot_d, x_ddot_d = sample_task_trajectory( t, self.move_duration, self.x_start, self.x_goal)
 
       # 一级任务：末端加速度指令
       command = (self.controller .calculate_task_acceleration_command( q, q_dot, x_d, x_dot_d, x_ddot_d,))

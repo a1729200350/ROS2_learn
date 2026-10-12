@@ -16,7 +16,7 @@
 | `computed_torque_control_monitor` | 发布关节力矩与 13 字段 `/computed_torque_tracking` |
 | `joint_dynamics_simulator` | 独立软件动力学积分与关节状态发布；不是 Gazebo |
 | `trajectory_tracking_analyzer` | 将 13 字段跟踪消息写入启动目录的 `tracking_data.csv`；会覆盖同名文件 |
-| `operational_space_control_monitor` | 二维末端任务与零空间姿态控制、力矩限幅和 16 字段 OSC 跟踪消息 |
+| `operational_space_control_monitor` | 二维末端任务与零空间姿态控制、单次/周期往返轨迹、力矩限幅和 16 字段跟踪消息 |
 | `osc_auto_activator` | 等待 `/osc_ready` 后激活 Gazebo 力矩控制器；不调用 `/osc_start` |
 
 节点源文件位于 [`three_link_arm_kinematics/`](three_link_arm_kinematics/)。位置型 mock 控制器不会消费 `/joint_effort_command`；独立软件仿真和 Gazebo 是两条不同的力矩闭环路径，不能混用状态源。
@@ -43,13 +43,13 @@ OSC 任务是平面末端 `[x, y]`，不控制末端姿态。直接逆解要求�
 | `/joint_effort_command` | `std_msgs/msg/Float64MultiArray` | 三关节限幅后的力矩指令；Gazebo launch 重映射到 `/effort_controller/commands` |
 | `/osc_tracking` | `std_msgs/msg/Float64MultiArray` | 同次控制计算得到的 16 个跟踪数值 |
 | `/osc_ready` | `std_srvs/srv/Trigger` | 自动激活前检查；不启动轨迹 |
-| `/osc_start` | `std_srvs/srv/Trigger` | 从保持状态启动一次轨迹；同次运行不支持重新触发 |
+| `/osc_start` | `std_srvs/srv/Trigger` | 从保持状态启动当前模式的运动；同次运行不支持重新触发，周期往返无需重复调用 |
 
 `/osc_tracking` 的零基索引如下，切片区间右端不包含在内：
 
 | 索引/切片 | 数据 | 单位 |
 | --- | --- | --- |
-| `0` | 轨迹时间 `t`，等待启动时为零 | s |
+| `0` | 启动后累计轨迹时间 `t`，等待时为零，周期模式也不逐周期归零 | s |
 | `1:3` | 期望末端位置 `x_d` | m |
 | `3:5` | 实际末端位置 `x` | m |
 | `5:7` | 末端误差 `x_d - x` | m |
@@ -61,7 +61,7 @@ OSC 任务是平面末端 `[x, y]`，不控制末端姿态。直接逆解要求�
 
 ## 参数、就绪与故障
 
-启动参数与当前默认值见[配置说明](../three_link_arm_description/README.md#osc-启动参数)。从工作空间根目录单独运行时可显式加载配置：
+启动参数与当前配置值见[配置说明](../three_link_arm_description/README.md#osc-启动参数)。从工作空间根目录单独运行时可显式加载配置：
 
 ```bash
 ros2 run three_link_arm_kinematics operational_space_control_monitor --ros-args \
@@ -69,6 +69,10 @@ ros2 run three_link_arm_kinematics operational_space_control_monitor --ros-args 
 ```
 
 该命令只启动控制节点，仍需要合适的状态源与力矩接收端。首次有效反馈后先保持；`/osc_start` 成功才开始移动。
+
+`trajectory_mode` 在节点中默认为 `single`，但上面的 YAML 将其设为 `periodic`。单次模式在 `move_duration` 后保持终点；周期模式前一段从起点到目标，后一段沿同一路径返回，之后重复。当前每段 `2 s`，完整周期 `4 s`；各段均调用五次轨迹采样函数，段间位置、速度和加速度连续。时长必须有限且大于零，模式只接受 `single` 或 `periodic`。
+
+节点仍只在启动约 `4 s` 时打印一次统计，周期运行不会每轮重置统计或自动停止。长时间实验的全程误差与曲线应使用[周期录包绘图脚本](../../scripts/README.md#周期往返录包绘图)，不能把首个统计窗口当成全部记录的指标。
 
 `/osc_ready` 检查无故障、反馈与正常力矩新鲜度、尚未启动轨迹、低关节速度，并要求原始需求力矩不超过逐关节限幅。限幅后的输出正常不等于原始需求满足就绪门槛；`/osc_start` 不复用完整的就绪检查。
 

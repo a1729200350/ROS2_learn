@@ -1,0 +1,25 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: three_link_arm_description
+    relative_path: urdf/three_link_arm.urdf
+  srdf:
+    relative_path: config/three_link_arm.srdf
+  package_settings:
+    author_name: LM
+    author_email: a1729200350@gmail.com
+    generated_timestamp: 1791774677
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+    state:
+      - position
+      - velocity

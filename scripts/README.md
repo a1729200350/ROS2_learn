@@ -4,7 +4,7 @@
 
 ## 控制器与 OSC 输出监视
 
-[`osc_controller_state_watch.py`](osc_controller_state_watch.py) 由 Gazebo launch 自动启动，不必另开一份。它不是纯日志查看器：触发故障后会主动请求暂停仿真。
+[`osc_controller_state_watch.py`](osc_controller_state_watch.py) 由 OSC 的 `three_link_arm_gazebo.launch.py` 自动启动，不必另开一份；独立 JTC launch 不启动它。它不是纯日志查看器：触发故障后会主动请求暂停仿真。
 
 | 监视条件 | 当前行为 |
 | --- | --- |
@@ -45,3 +45,25 @@ python3 scripts/plot_osc_error.py
 | `baseline_01_velocity.png` | 三关节速度，rad/s |
 
 当前脚本在顶层直接执行读取和绘图，导入它也会产生上述文件写入；它不是无副作用的库模块。仓库已附带三张图片，浏览结果不需要重新运行脚本。
+
+## 周期往返录包绘图
+
+[`plot_osc_periodic.py`](plot_osc_periodic.py) 固定读取 `~/ros2_ws/osc_records/periodic_01`，依赖与基线脚本相同。它不回放消息，也没有命令行录包选择参数；不会自动切换到 `periodic_60s_01`。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+python3 scripts/plot_osc_periodic.py
+```
+
+无图形环境时可在命令前加 `MPLBACKEND=Agg`。脚本跳过不足 16 字段或轨迹时间 `t <= 0` 的消息，以控制器发布的累计轨迹时间为横轴，绘制全部有效记录，不采用基线脚本的前后截取窗口。若找不到启动后的数据则报错。
+
+终端输出有效样本数、轨迹时间范围、x/y 全程 RMS 和最大绝对误差（mm），以及逐关节最大绝对力矩（N·m）。RMS 按消息样本计算，未按相邻时间间隔加权。输出位置为 `osc_records/`：
+
+| 文件 | 内容 |
+| --- | --- |
+| `periodic_01_tracking.png` | x/y 期望与实际末端位置，m |
+| `periodic_01_error.png` | x/y 位置误差，mm |
+| `periodic_01_torque.png` | 三关节限幅后的力矩指令，N·m |
+| `periodic_01_velocity.png` | 三关节速度，rad/s |
+
+运行或导入此脚本都会执行顶层绘图并覆盖同名图片。仓库已经保存了四张图，可直接在[实验记录页](../osc_records/README.md#已保存的周期曲线)查看；本目录说明不将文件名或当前参数当成采集时的参数证明。

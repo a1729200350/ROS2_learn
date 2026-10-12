@@ -1,6 +1,6 @@
 # ROS2_learn
 
-一个面向 ROS 2 入门与机械臂运动学实验的学习工作空间，包含双 `turtlesim`、三连杆机械臂 URDF/RViz、约束逆运动学、动力学、操作空间控制与离线仿真，以及 ros2_control 模拟硬件和 Gazebo 模型配置。
+一个面向 ROS 2 入门与机械臂运动学实验的学习工作空间，包含双 `turtlesim`、三连杆机械臂 URDF/RViz、约束逆运动学、动力学、操作空间控制与离线仿真，以及 ros2_control、Gazebo 和 MoveIt 配置。当前同时保留 OSC 力矩控制与独立的位置轨迹控制实验入口。
 
 ## 功能包
 
@@ -9,6 +9,7 @@
 | `my_turtle_launch` | `ament_python` | 同时启动两个带命名空间的 `turtlesim` 节点，分别使用红色和蓝色背景 |
 | `three_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz、ros2_control 模拟硬件与位置轨迹控制配置，以及 Gazebo 专用 URDF、启动文件和力矩控制器配置 |
 | `three_link_arm_kinematics` | `ament_python` | 运动学、动力学、关节空间控制、轨迹生成与监控，以及操作空间控制 ROS 2 节点、计算模块与离线实验 |
+| `three_link_arm_moveit_config` | `ament_cmake` | MoveIt 规划组、命名姿态、控制器映射、RViz 与组件启动配置；尚非一体化 Gazebo 执行入口 |
 
 三连杆模型的连杆长度为 `L1 = 0.5 m`、`L2 = 0.4 m`、`L3 = 0.4 m`，与 URDF 和运动学节点中的参数一致。
 
@@ -18,8 +19,9 @@
 | --- | --- |
 | [模型、启动与参数](src/three_link_arm_description/README.md) | 三种启动方式、控制器配置和 OSC 参数表 |
 | [运动学与控制功能包](src/three_link_arm_kinematics/README.md) | ROS 节点入口、计算模块、跟踪消息字段和实验边界 |
-| [辅助脚本](scripts/README.md) | 控制器状态监视、故障暂停条件和录包绘图 |
-| [OSC 实验记录](osc_records/README.md) | 两组 MCAP 数据、话题统计和已保存的曲线 |
+| [MoveIt 配置](src/three_link_arm_moveit_config/README.md) | `arm` 规划组、`home` 姿态、位置轨迹接口及当前限制 |
+| [辅助脚本](scripts/README.md) | 控制器状态监视、故障暂停条件和基线/周期录包绘图 |
+| [OSC 实验记录](osc_records/README.md) | 四组 MCAP 数据、实际记录时长和已保存的曲线 |
 
 ## 环境
 
@@ -29,6 +31,7 @@
 - RViz2、`joint_state_publisher_gui`、`robot_state_publisher` 和 `turtlesim`
 - ros2_control、ros2_controllers、`controller_manager`、`controller_manager_msgs`、`trajectory_msgs`、`std_msgs`、`std_srvs`
 - Gazebo 示例额外需要 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
+- MoveIt 配置包另声明了 `moveit_configs_utils`、规划/可视化组件、Setup Assistant 和 `xacro` 等依赖，见该包的 `package.xml`
 
 ## 获取代码与安装依赖
 
@@ -38,7 +41,7 @@ git clone git@github.com:a1729200350/ROS2_learn.git ros2_ws
 cd ros2_ws
 ```
 
-当前 Gazebo 启动文件通过固定路径 `~/ros2_ws/scripts/osc_controller_state_watch.py` 启动监视脚本，绘图脚本也固定读取 `~/ros2_ws/osc_records/baseline_01`，因此上面的目录名称与位置有实际意义。已有工作空间不必重新克隆；使用其他路径时需先核对这两处路径假设。
+当前 OSC Gazebo 启动文件通过固定路径 `~/ros2_ws/scripts/osc_controller_state_watch.py` 启动监视脚本，两个绘图脚本也分别固定读取 `~/ros2_ws/osc_records/baseline_01` 和 `periodic_01`，因此上面的目录名称与位置有实际意义。已有工作空间不必重新克隆；使用其他路径时需先核对这些路径假设。
 
 首次使用 `rosdep` 时，需要先完成系统级初始化：
 
@@ -281,9 +284,11 @@ PYTHONPATH=src/three_link_arm_kinematics python3 -B src/three_link_arm_kinematic
 
 ### 9. ROS 2 操作空间控制与实验录包
 
-`operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务与零空间力矩，并发布到 `/joint_effort_command`。首次有效反馈且 ROS 时钟可用后，节点建立末端起点并进入保持模式；调用 `/osc_start` 后，才用 `2 s` 五次时间缩放移动 `[0.01, -0.006] m`，随后保持目标。等待服务调用期间仍会发布保持控制力矩。
+`operational_space_control_monitor` 订阅 `/joint_states`，按关节名称读取位置与速度，以 `0.01 s` 定时周期计算主任务与零空间力矩，并发布到 `/joint_effort_command`。首次有效反馈且 ROS 时钟可用后，节点建立末端起点并进入保持模式；调用 `/osc_start` 后才开始移动。等待服务调用期间仍会发布保持控制力矩。
 
-节点已将重力、主任务/姿态增益、姿态目标、末端位移、轨迹时长和逐关节力矩限制暴露为启动时 ROS 参数。[OSC 参数表](src/three_link_arm_description/README.md#osc-启动参数)列出了当前配置；Gazebo 启动会自动加载 `config/osc_params.yaml`，直接 `ros2 run` 不会自动加载该文件。参数在构造节点时读取，当前没有控制参数热更新回调。
+`trajectory_mode` 支持 `single` 和 `periodic`：前者完成一段五次时间缩放后保持终点，后者在起点与目标之间持续往返，每段持续 `move_duration`，完整周期为其两倍。当前 YAML 配置为 `periodic`、每段 `2 s`、目标相对位移 `[0.01, -0.006] m`，因此完整往返周期为 `4 s`；不加载参数文件时，节点内默认模式仍是 `single`。每段端点速度与加速度为零，往返连接处的位置、速度、加速度连续。
+
+节点已将重力、主任务/姿态增益、姿态目标、末端位移、轨迹时长/模式和逐关节力矩限制暴露为启动时 ROS 参数。[OSC 参数表](src/three_link_arm_description/README.md#osc-启动参数)列出了当前配置；Gazebo 启动会自动加载 `config/osc_params.yaml`，直接 `ros2 run` 不会自动加载该文件。参数在构造节点时读取，当前没有控制参数热更新回调。时长必须为有限正数，模式名称只接受 `single` 或 `periodic`（读取时转为小写）。
 
 默认动力学重力参数为 `g = 9.8`，零空间期望关节位置为 `[0.5, -0.8, 1.2]`，零空间原始力矩为 `G + Kp_posture (q_desired - q) - Kd_posture q_dot`，再经 `N.T` 投影。主任务增益默认为 `kp = (10, 10)`、`kd = (4.43, 4.43)`，姿态增益为 `Kp_posture = I`、`Kd_posture = 0.5 I`。
 
@@ -314,7 +319,7 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 这个实验由 OSC 节点内部生成任务轨迹，无需 `trajectory_generator`。运行时只保留这一套状态源和力矩源，不要同时启动 ros2_control/Gazebo 状态发布器或另一个计算力矩节点。
 
-节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`；[字段索引](src/three_link_arm_kinematics/README.md#osc-接口)供离线读取使用。`tau` 为实际发布的限幅后力矩指令，不是原始需求力矩，也不是测量力矩。等待启动时 `t = 0`；统计从成功触发轨迹后开始，在轨迹时间约 `4 s` 时打印一次误差及力矩统计，等待时间不计入 RMS，之后继续保持目标。现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
+节点通过 `/osc_tracking` 发布 16 个数值，顺序为 `t, x_d(2), x(2), error(2), q(3), q_dot(3), tau(3)`，类型为 `std_msgs/msg/Float64MultiArray`；[字段索引](src/three_link_arm_kinematics/README.md#osc-接口)供离线读取使用。`tau` 为实际发布的限幅后力矩指令，不是原始需求力矩，也不是测量力矩。等待启动时 `t = 0`；启动后 `t` 持续累计，即使在周期模式下也不会每周期归零。统计从成功触发轨迹后开始，在轨迹时间约 `4 s` 时打印一次，等待时间不计入 RMS；这不是长时间周期实验的全程统计。之后单次模式保持终点，周期模式继续往返。现有 `trajectory_tracking_analyzer` 只接收 `/computed_torque_tracking` 的 13 字段数据，不能直接记录这个新话题。
 
 当前保护条件包括反馈超过 `0.2 s` 未更新、`sigma_min(J) < 1e-6`、计算失败、非有限力矩或任一力矩绝对值超过 `100`。触发后节点锁定，立即发布 `[0, 0, 0]`，并在后续定时回调中继续发布零力矩，不会自动恢复。持续的零力矩消息不会触发独立动力学仿真器的命令超时暂停；零力矩也不等于保持关节姿态。
 
@@ -328,7 +333,7 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 ros2 bag info osc_ros2_run1
 ```
 
-新增的 `osc_records/` 保存 `baseline_01`、`saturation_01` 两组录包和三张基线曲线，详见[实验记录说明](osc_records/README.md)。这些数据包含 `/effort_controller/commands`，与上述历史录包的力矩话题不同；目录名称和当前 YAML 配置不能单独证明录制时的实际参数。
+`osc_records/` 保存 `baseline_01`、`saturation_01`、`periodic_01`、`periodic_60s_01` 四组录包，以及基线和周期曲线，详见[实验记录说明](osc_records/README.md)。这些数据包含 `/effort_controller/commands`，与上述历史录包的力矩话题不同。新增周期绘图脚本直接使用控制器的轨迹时间并绘制全部启动后数据；录包名中的 `60s` 不等于实测时长，目录名称和当前 YAML 也不能单独证明录制参数。
 
 ### 10. Gazebo 模型与自动激活流程
 
@@ -336,7 +341,7 @@ ros2 bag info osc_ros2_run1
 
 URDF 还为 Gazebo 配置了 `link1`、`link2` 的红色材质和 `link3` 的绿色材质。
 
-`config/three_link_arm_controllers.yaml` 配置 `100 Hz` 控制器管理器、`joint_state_broadcaster` 和 `effort_controller`（`effort_controllers/JointGroupEffortController`），与第 4 节的位置轨迹控制配置分开。
+`config/three_link_arm_controllers.yaml` 配置 `100 Hz` 控制器管理器、`joint_state_broadcaster` 和 `effort_controller`（`effort_controllers/JointGroupEffortController`），并新增 effort 接口的 `joint_trajectory_controller` 定义。但本节 launch 仍只加载状态广播器与 `effort_controller`，不会自动启用新增 JTC；独立的位置型 Gazebo JTC 配置见下一节，不要混淆这几份控制器 YAML。
 
 ```bash
 ros2 launch three_link_arm_description three_link_arm_gazebo.launch.py
@@ -362,6 +367,18 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 启动文件还会独立启动 `scripts/osc_controller_state_watch.py`。监视器只在观察到 `effort_controller` 激活后进入保护阶段：随后控制器失去 `active`、从未收到跟踪消息且激活已超过 `2 s`，或已收到的 `/osc_tracking` 中断超过 `0.5 s`，都会触发一次故障锁定并请求暂停 Gazebo 的 `empty` 世界，再读取世界状态确认暂停。它不自动恢复或重新激活控制器；完整条件、路径依赖和暂停失败日志见[辅助脚本说明](scripts/README.md)。
 
+### 11. 独立 Gazebo JTC 与 MoveIt 配置
+
+新增的位置型 JTC 实验由 `three_link_arm_jtc_gazebo.urdf` 与 `three_link_arm_jtc_controllers.yaml` 配套使用。其启动文件当前位于双层 `launch/launch/` 目录；从工作空间根目录、完成构建并加载环境后，可按实际文件路径启动：
+
+```bash
+ros2 launch src/three_link_arm_description/launch/launch/three_link_arm_jtc.launch.py
+```
+
+该入口依次生成模型、启动状态广播器，再以 `--inactive` 加载 `joint_trajectory_controller`，不自动激活或发送轨迹；也不启动 OSC、OSC 自动激活器或状态监视脚本。保持未激活是当前脚本的明确安排，不能仅凭 launch 启动就宣称轨迹执行已就绪。详见[模型与启动说明](src/three_link_arm_description/README.md#独立-gazebo-jtc-实验)。
+
+新增 `three_link_arm_moveit_config` 定义 `arm_base → tool0` 的 `arm` 规划组、`home = [0.5, -0.8, 1.2]` 命名姿态和 `FollowJointTrajectory` 控制器映射。它包含 `move_group`、RViz、状态发布与 Setup Assistant 的组件入口，但目前没有统一 `demo.launch.py`，`kinematics.yaml` 为空映射，生成的控制 Xacro 使用 mock 硬件而不是 Gazebo 系统。配置内容、入口及集成边界见[MoveIt README](src/three_link_arm_moveit_config/README.md)；这些文件本身不证明规划与 Gazebo 执行已联通。
+
 ## 测试
 
 ```bash
@@ -377,14 +394,18 @@ ros2_ws/
 ├── scripts/
 │   ├── README.md
 │   ├── osc_controller_state_watch.py
-│   └── plot_osc_error.py
+│   ├── plot_osc_error.py
+│   └── plot_osc_periodic.py
 ├── osc_records/
 │   ├── README.md
 │   ├── baseline_01/
 │   ├── saturation_01/
+│   ├── periodic_01/
+│   ├── periodic_60s_01/
 │   ├── baseline_01_error.png
 │   ├── baseline_01_torque.png
-│   └── baseline_01_velocity.png
+│   ├── baseline_01_velocity.png
+│   └── periodic_01_*.png
 ├── osc_ros2_run1/
 │   ├── metadata.yaml
 │   └── osc_ros2_run1_0.mcap
@@ -393,7 +414,8 @@ ros2_ws/
 └── src/
     ├── my_turtle_launch/
     ├── three_link_arm_description/   # README、launch、config、urdf
-    └── three_link_arm_kinematics/    # README、节点、计算模块与实验
+    ├── three_link_arm_kinematics/    # README、节点、计算模块与实验
+    └── three_link_arm_moveit_config/ # README、MoveIt 配置与组件入口
 ```
 
 `reference/finite_difference_velocity_reference.py` 是带角度展开、时间间隔检查和低通滤波的差分速度参考实现，不会被当前节点自动加载。`build/`、`install/` 和 `log/` 是 `colcon` 生成目录，已通过 `.gitignore` 排除，不需要提交到仓库。

@@ -7,6 +7,11 @@
           <cylinder radius="0.08" length="0.05"/>
         </geometry>
     </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.08" length="0.05"/>
+      </geometry>
+    </collision>
   </link>
   <!-- 机械臂安装坐标系：把平面3R竖起来 -->
   <link name="arm_base"/>
@@ -25,6 +30,12 @@
           <box size = "0.5 0.05 0.05"/>
         </geometry>
     </visual>
+    <collision>
+      <origin xyz="0.25 0 0"/>
+      <geometry>
+        <box size="0.5 0.05 0.05"/>
+      </geometry>
+    </collision>
     <inertial>
 
     <origin xyz="0.25 0 0" rpy="0 0 0"/>
@@ -68,6 +79,12 @@
         <box size ="0.4 0.05 0.05"/>
       </geometry>
     </visual>
+    <collision>
+      <origin xyz="0.20 0 0"/>
+      <geometry>
+        <box size="0.4 0.05 0.05"/>
+      </geometry>
+    </collision>
     <inertial>
 
       <origin xyz="0.2 0 0" rpy="0 0 0"/>
