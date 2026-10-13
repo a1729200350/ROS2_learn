@@ -2,9 +2,11 @@
 
 这些脚本位于工作空间根目录，未注册为 `ros2 run` 入口。完整运行环境见[首页](../README.md)，实验文件见[OSC 记录](../osc_records/README.md)。
 
+MoveIt 轨迹采集、转换、插值及文件轨迹 OSC 的录包分析位于另一个目录，见[MoveIt 工具说明](../src/three_link_arm_moveit_config/tools/README.md)，不要与本目录的 JTC 状态分析或基线绘图混淆。
+
 ## 控制器与 OSC 输出监视
 
-[`osc_controller_state_watch.py`](osc_controller_state_watch.py) 由 OSC 的 `three_link_arm_gazebo.launch.py` 自动启动，不必另开一份；独立 JTC launch 不启动它。它不是纯日志查看器：触发故障后会主动请求暂停仿真。
+[`osc_controller_state_watch.py`](osc_controller_state_watch.py) 由原 OSC 的 `three_link_arm_gazebo.launch.py` 或文件驱动的 `three_link_arm_moveit_osc.launch.py` 自动启动，不必另开一份；独立 JTC launch 不启动它。它不是纯日志查看器：触发故障后会主动请求暂停仿真。
 
 | 监视条件 | 当前行为 |
 | --- | --- |

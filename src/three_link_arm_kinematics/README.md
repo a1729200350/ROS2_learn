@@ -18,6 +18,7 @@
 | `trajectory_tracking_analyzer` | 将 13 字段跟踪消息写入启动目录的 `tracking_data.csv`；会覆盖同名文件 |
 | `operational_space_control_monitor` | 二维末端任务与零空间姿态控制、单次/周期往返轨迹、力矩限幅和 16 字段跟踪消息 |
 | `osc_auto_activator` | 等待 `/osc_ready` 后激活 Gazebo 力矩控制器；不调用 `/osc_start` |
+| `moveit_osc_effort_monitor` | 加载 MoveIt NPZ，计算严格 OSC 主任务与移动姿态零空间力矩 |
 
 节点源文件位于 [`three_link_arm_kinematics/`](three_link_arm_kinematics/)。位置型 mock 控制器不会消费 `/joint_effort_command`；独立软件仿真和 Gazebo 是两条不同的力矩闭环路径，不能混用状态源。
 
@@ -61,6 +62,8 @@ OSC 任务是平面末端 `[x, y]`，不控制末端姿态。直接逆解要求�
 
 ## 参数、就绪与故障
 
+本节描述原 `operational_space_control_monitor`；文件驱动的新节点见下一节。
+
 启动参数与当前配置值见[配置说明](../three_link_arm_description/README.md#osc-启动参数)。从工作空间根目录单独运行时可显式加载配置：
 
 ```bash
@@ -77,3 +80,23 @@ ros2 run three_link_arm_kinematics operational_space_control_monitor --ros-args 
 `/osc_ready` 检查无故障、反馈与正常力矩新鲜度、尚未启动轨迹、低关节速度，并要求原始需求力矩不超过逐关节限幅。限幅后的输出正常不等于原始需求满足就绪门槛；`/osc_start` 不复用完整的就绪检查。
 
 控制器先做有限值、奇异性、反馈超时和 `100 N·m` 原始力矩异常值检查，再执行可配置的力矩裁剪。故障后锁定并持续发布零力矩；零力矩不是姿态保持，也不会让仍持续收到命令的独立动力学仿真器触发超时暂停。Gazebo 的独立[状态监视脚本](../../scripts/README.md)是另一层暂停机制。
+
+## MoveIt 文件轨迹 OSC
+
+[`moveit_osc_effort_monitor.py`](three_link_arm_kinematics/moveit_osc_effort_monitor.py) 是独立节点入口，使用 `trajectory_file` 参数读取 NPZ，不接收 `FollowJointTrajectory` 动作或 MoveIt 新规划。完整启动命令见[描述包](../three_link_arm_description/README.md#moveit-文件轨迹-osc-启动)。
+
+输入至少包含 `t, q, dq, ddq, joint_names, task_frame`：时间从零开始、严格递增且至少两点；关节数组为 `N × 3`，数值有限；名称顺序严格为 `joint1, joint2, joint3`，任务坐标系为 `arm_base`。原始采集文件缺少 `task_frame`，应使用[转换/插值后的文件](../../moveit_trajectory_records/README.md)。
+
+节点按 `0.01 s` 定时周期对 `q/dq/ddq` 分别线性采样，再计算 `x_d`、`J(q_d)dq_d`、`J(q_d)ddq_d + J_dot(q_d,dq_d)dq_d`；不直接读取 NPZ 的 `x/dx/ddx`。离线生成密集文件使用五次 Hermite 插值，与在线线性采样是不同过程。
+
+零空间目标随参考姿态移动：`tau_id = M ddq_d + V + G`，对 `tau_id + Kp0(q_d-q) + Kd0(dq_d-dq)` 施加 `N.T` 投影后，与任务力矩相加。启动前保持文件起点，结束后保持终点，参考速度与加速度为零。任务增益默认 `[10,10]` / `[4.43,4.43]`，姿态增益 `1.0` / `0.5`，重力 `9.8`。
+
+| 检查 | 新节点当前条件 |
+| --- | --- |
+| `/osc_ready` | 无故障、完整反馈、反馈年龄 ≤ `0.2 s`、正常力矩年龄 ≤ `0.1 s`、未启动、逐关节速度 ≤ `0.1 rad/s`、起点偏差 ≤ `0.02 rad`、原始需求力矩不超限 |
+| `/osc_start` | 复用完整就绪检查，再要求 activity 消息中 effort 控制器为 `active` 且仿真时间大于零；同次运行只能启动一次 |
+| 运行边界 | `sigma_min(J) < 0.005`、任一关节角绝对值 > `3.14 rad`、速度绝对值 > `10 rad/s`，或关节误差范数 > `1 rad` 时故障 |
+| 其他故障 | 反馈超时、仿真时间退到启动时刻之前、计算异常、非有限力矩或原始力矩绝对值 > `100 N·m` |
+| 输出限幅 | `torque_limit` 默认 `[10,10,10] N·m`，须为三个有限正数；限幅警告约每秒最多一次 |
+
+本节点增加 `/controller_manager/activity` 订阅，其余状态、力矩、服务和 16 字段跟踪格式与原 OSC 共用名称，不能同时启动两个 OSC 节点。故障后持续发布零力矩并停止 `/osc_tracking`；配套监视器在观察到 effort 激活后，可因跟踪超时请求暂停 Gazebo。零力矩不等于保持姿态，暂停是否成功应看监视器确认日志。

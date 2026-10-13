@@ -9,7 +9,7 @@
 | `my_turtle_launch` | `ament_python` | 同时启动两个带命名空间的 `turtlesim` 节点，分别使用红色和蓝色背景 |
 | `three_link_arm_description` | `ament_cmake` | 三连杆 URDF、RViz、ros2_control 模拟硬件与位置轨迹控制配置，以及 Gazebo 专用 URDF、启动文件和力矩控制器配置 |
 | `three_link_arm_kinematics` | `ament_python` | 运动学、动力学、关节空间控制、轨迹生成与监控，以及操作空间控制 ROS 2 节点、计算模块与离线实验 |
-| `three_link_arm_moveit_config` | `ament_cmake` | MoveIt 规划组、命名姿态、控制器映射、RViz 与组件启动配置；尚非一体化 Gazebo 执行入口 |
+| `three_link_arm_moveit_config` | `ament_cmake` | MoveIt 配置、JTC 规划组件，以及轨迹采集、OSC 转换/插值、离线验证与录包分析工具 |
 
 三连杆模型的连杆长度为 `L1 = 0.5 m`、`L2 = 0.4 m`、`L3 = 0.4 m`，与 URDF 和运动学节点中的参数一致。
 
@@ -20,8 +20,10 @@
 | [模型、启动与参数](src/three_link_arm_description/README.md) | 显示、mock、OSC/JTC Gazebo 启动方式、控制器配置和 OSC 参数表 |
 | [运动学与控制功能包](src/three_link_arm_kinematics/README.md) | ROS 节点入口、计算模块、跟踪消息字段和实验边界 |
 | [MoveIt 配置](src/three_link_arm_moveit_config/README.md) | `arm` 规划组、`home` 姿态、位置轨迹接口及当前限制 |
+| [MoveIt → OSC 工具](src/three_link_arm_moveit_config/tools/README.md) | 规划轨迹采集、任务参考转换、100 Hz 插值及离线实验 |
+| [MoveIt 轨迹文件](moveit_trajectory_records/README.md) | 原始/转换后 NPZ、字段、离线闭环结果与使用边界 |
 | [辅助脚本](scripts/README.md) | 控制器状态监视、OSC 绘图与 MoveIt/JTC 录包分析 |
-| [OSC 实验记录](osc_records/README.md) | 四组 MCAP 数据、实际记录时长和已保存的曲线 |
+| [OSC 实验记录](osc_records/README.md) | 原有四组及新增三组 MoveIt-OSC MCAP 数据、实际时长和分析文件 |
 | [MoveIt/JTC 实验记录](jtc_records/README.md) | 三组关节轨迹跟踪录包、曲线与已有分析摘要 |
 
 ## 环境
@@ -34,6 +36,7 @@
 - Gazebo 示例额外需要 `ros_gz_sim`、`ros_gz_bridge`、`gz_ros2_control`；查看 MCAP 实验录包需要对应的 rosbag2 存储插件
 - MoveIt 配置包另声明了 `moveit_configs_utils`、规划/可视化组件、Setup Assistant 和 `xacro` 等依赖，见该包的 `package.xml`
 - JTC 离线分析额外读取 `control_msgs/msg/JointTrajectoryControllerState`，需要 `control_msgs`、`rosbag2_py`、MCAP 插件、NumPy 和 Matplotlib
+- MoveIt 规划轨迹采集需要 `moveit_msgs/msg/DisplayTrajectory`；转换和插值使用 NumPy，控制及离线动力学实验复用本工作空间的运动学包
 
 ## 获取代码与安装依赖
 
@@ -335,7 +338,7 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 ros2 bag info osc_ros2_run1
 ```
 
-`osc_records/` 保存 `baseline_01`、`saturation_01`、`periodic_01`、`periodic_60s_01` 四组录包，以及基线和周期曲线，详见[实验记录说明](osc_records/README.md)。这些数据包含 `/effort_controller/commands`，与上述历史录包的力矩话题不同。新增周期绘图脚本直接使用控制器的轨迹时间并绘制全部启动后数据；录包名中的 `60s` 不等于实测时长，目录名称和当前 YAML 也不能单独证明录制参数。
+`osc_records/` 保存四组原有基线/周期录包，以及第 12 节对应的三组 MoveIt-OSC 录包，详见[实验记录说明](osc_records/README.md)。这些数据包含 `/effort_controller/commands`，与历史 `osc_ros2_run1/` 的力矩话题不同。周期绘图脚本直接使用控制器的轨迹时间并绘制全部启动后数据；录包名中的 `60s` 不等于实测时长，目录名称和当前 YAML 也不能单独证明录制参数。
 
 ### 10. Gazebo 模型与自动激活流程
 
@@ -343,7 +346,7 @@ ros2 bag info osc_ros2_run1
 
 URDF 还为 Gazebo 配置了 `link1`、`link2` 的红色材质和 `link3` 的绿色材质。
 
-`config/three_link_arm_controllers.yaml` 配置 `100 Hz` 控制器管理器、`joint_state_broadcaster` 和 `effort_controller`（`effort_controllers/JointGroupEffortController`），并新增 effort 接口的 `joint_trajectory_controller` 定义。但本节 launch 仍只加载状态广播器与 `effort_controller`，不会自动启用新增 JTC；独立的位置型 Gazebo JTC 配置见下一节，不要混淆这几份控制器 YAML。
+`config/three_link_arm_controllers.yaml` 当前配置 `200 Hz` 控制器管理器、`joint_state_broadcaster` 和 `effort_controller`（`effort_controllers/JointGroupEffortController`），并保留 effort 接口的 `joint_trajectory_controller` 定义。管理器频率与 OSC 节点的 `100 Hz` 定时周期不同。本节 launch 仍只加载状态广播器与 `effort_controller`，不会自动启用该 JTC；独立的位置型 Gazebo JTC 配置见下一节，不要混淆这几份控制器 YAML。
 
 ```bash
 ros2 launch three_link_arm_description three_link_arm_gazebo.launch.py
@@ -391,6 +394,31 @@ ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
 
 目前仍没有统一 `demo.launch.py`，`kinematics.yaml` 为空映射，生成的控制 Xacro 使用 mock 硬件而不是 Gazebo 系统。配置内容、入口及集成边界见[MoveIt README](src/three_link_arm_moveit_config/README.md)。仓库现有三组 JTC 参考/反馈录包和已有曲线，见[实验记录](jtc_records/README.md)；它们可用于检查记录中的跟踪情况，但本次文档更新没有重新运行 Gazebo 或验证每次规划动作的成功状态。
 
+### 12. 保存的 MoveIt 轨迹经 OSC 执行
+
+这是一条与 JTC 不同的执行路径：先采集 MoveIt 新规划，保存关节轨迹，再转换/插值成 NPZ；`moveit_osc_effort_monitor` 加载文件，计算二维末端任务参考和移动姿态零空间力矩，向 Gazebo effort 控制器发布命令。它不是 `FollowJointTrajectory` 动作服务器，也不在线接收新规划。
+
+工具和离线实验见[MoveIt → OSC 工具说明](src/three_link_arm_moveit_config/tools/README.md)。仓库已有一条约 `13.994 s` 的样例轨迹，原始 141 点、插值后 1,401 点，以及离线闭环数据，见[轨迹文件说明](moveit_trajectory_records/README.md)。完成构建并加载环境后，可使用样例启动：
+
+```bash
+ros2 launch three_link_arm_description three_link_arm_moveit_osc.launch.py \
+  trajectory_file:=$HOME/ros2_ws/moveit_trajectory_records/moveit_trajectory_20261013_085205_osc_interp_100hz.npz
+```
+
+该入口使用 effort 模型，依次加载状态广播器、未激活的力矩控制器，再启动文件驱动 OSC 和自动激活器，同时运行独立监视器。必须指定 `trajectory_file`；控制增益由此 launch 显式传入，不加载 `osc_params.yaml`，原来的 `trajectory_mode` 和 `move_duration` 不控制文件轨迹。
+
+自动激活成功后，在另一已加载环境的终端检查并触发：
+
+```bash
+ros2 control list_controllers
+ros2 service call /osc_ready std_srvs/srv/Trigger "{}"
+ros2 service call /osc_start std_srvs/srv/Trigger "{}"
+```
+
+新节点的 `/osc_start` 复用完整就绪检查，还要求 effort 控制器已激活、仿真时钟有效；各关节与文件起点的偏差须不超过 `0.02 rad`。轨迹结束后保持终点，同次运行不可再次启动。故障边界与原 OSC 不同，见[节点说明](src/three_link_arm_kinematics/README.md#moveit-文件轨迹-osc)。
+
+不要同时运行 JTC Gazebo、原 OSC launch 或第二个力矩发布节点；文件执行阶段不需要 MoveIt 再发 Execute。现有三组跟踪记录见[录包说明](osc_records/README.md#moveit-文件轨迹录包)。本次文档维护只读检查已有数据，没有重新运行实验。
+
 ## 测试
 
 ```bash
@@ -413,12 +441,17 @@ ros2_ws/
 │   ├── README.md
 │   ├── moveit_jtc_*/           # 三组 MCAP 录包
 │   └── *_analysis*/           # 已保存曲线；另有一份分析文本
+├── moveit_trajectory_records/
+│   ├── README.md
+│   ├── *.npz                  # 原始、转换和插值轨迹
+│   └── *_closed_loop/         # 离线跟踪数据与图片
 ├── osc_records/
 │   ├── README.md
 │   ├── baseline_01/
 │   ├── saturation_01/
 │   ├── periodic_01/
 │   ├── periodic_60s_01/
+│   ├── moveit_osc_*/            # 三组文件轨迹录包及分析目录
 │   ├── baseline_01_error.png
 │   ├── baseline_01_torque.png
 │   ├── baseline_01_velocity.png
@@ -432,7 +465,7 @@ ros2_ws/
     ├── my_turtle_launch/
     ├── three_link_arm_description/   # README、launch、config、urdf
     ├── three_link_arm_kinematics/    # README、节点、计算模块与实验
-    └── three_link_arm_moveit_config/ # README、MoveIt 配置与组件入口
+    └── three_link_arm_moveit_config/ # README、配置、launch、tools 与 manual_tests
 ```
 
 `reference/finite_difference_velocity_reference.py` 是带角度展开、时间间隔检查和低通滤波的差分速度参考实现，不会被当前节点自动加载。`build/`、`install/` 和 `log/` 是 `colcon` 生成目录，已通过 `.gitignore` 排除，不需要提交到仓库。

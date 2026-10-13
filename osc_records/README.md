@@ -1,6 +1,6 @@
 # OSC 实验记录
 
-本目录保存四组 ROS 2 Jazzy / MCAP 录包，以及基线和周期往返曲线。返回[首页](../README.md)；读取与绘图方式见[脚本说明](../scripts/README.md)。
+本目录保存七组 ROS 2 Jazzy / MCAP 录包，包括原有基线/周期实验和新增的三组 MoveIt 文件轨迹 OSC 实验。返回[首页](../README.md)；原有绘图见[辅助脚本](../scripts/README.md)，文件轨迹分析见[MoveIt 工具](../src/three_link_arm_moveit_config/tools/README.md)。
 
 ## 录包索引
 
@@ -21,6 +21,34 @@
 
 新增录包的启动后跟踪记录也已只读核对：`periodic_01` 有 3,522 条，轨迹时间约 `0.002–35.212 s`；`periodic_60s_01` 有 13,943 条，约 `0.009–139.429 s`。后者虽然名称含 `60s`，实际并非只有 60 秒。录包时间和消息中的轨迹时间是不同量，分析时应分别使用。
 
+## MoveIt 文件轨迹录包
+
+以下三组对应文件驱动的 `moveit_osc_effort_monitor`。简称用于缩短表格，链接指向完整目录；数量和时长已与实际 MCAP 只读遍历结果核对：
+
+| 录包简称 | 时长 | 总消息数 | `/joint_states` | `/osc_tracking` | 力矩命令 | `/clock` |
+| --- | --- | --- | --- | --- | --- | --- |
+| [effort · 103450](moveit_osc_effort_20261013_103450/metadata.yaml) | 37.75 s | 11,327 | 3,775 | 3,776 | 3,776 | 未录制 |
+| [cm200 · 110618](moveit_osc_cm200_20261013_110618/metadata.yaml) | 24.30 s | 33,221 | 4,860 | 2,392 | 2,392 | 23,577 |
+| [cm100_repeat · 111108](moveit_osc_cm100_repeat_20261013_111108/metadata.yaml) | 26.28 s | 34,023 | 2,568 | 2,589 | 2,589 | 26,277 |
+
+力矩命令话题为 `/effort_controller/commands`。前三类消息与上面的 OSC 格式相同，新增 `/clock` 为 `rosgraph_msgs/msg/Clock`。目录名里的 `cm100`、`cm200` 不是控制器管理器参数快照，不能只凭名称确认录制时的实际更新频率。
+
+对应参考文件为仓库中约 `13.994473236 s` 的[密集 MoveIt 轨迹](../moveit_trajectory_records/README.md)。三组录包的最大累计轨迹时间分别为 `33.457 s`、`23.365 s`、`21.922 s`，均包含参考终点后的记录；这只是时间范围证据，不保证中间每个采样时刻都无缺口。
+
+已有分析目录分别为：
+
+- [effort 分析](moveit_osc_effort_20261013_103450_analysis/)
+- [cm200 分析](moveit_osc_cm200_20261013_110618_analysis/)
+- [cm100_repeat 分析](moveit_osc_cm100_repeat_20261013_111108_analysis/)
+
+每组均含 `gazebo_tracking.npz`、`gazebo_task_error.png`、`gazebo_joint_error.png`、`gazebo_torque.png`。NPZ 保存 `t, xd, x, ex, qd, q, eq, dq, tau, sigma_min`；数据仅为运动阶段，而非完整录包。三组现有分析样本数依次为 1,399、1,399、1,400，时间范围分别为 `0.007–13.987 s`、`0.005–13.985 s`、`0.002–13.992 s`。
+
+下图为 `cm100_repeat` 已保存的末端误差曲线，不是本次重新生成：
+
+![MoveIt 文件轨迹 OSC 的末端误差](moveit_osc_cm100_repeat_20261013_111108_analysis/gazebo_task_error.png)
+
+分析工具只使用启动后的运动区间计算指标，末端保持另行报告；其饱和附近计数使用固定 `9.999 N·m` 阈值。输入、输出与覆盖行为见[工具说明](../src/three_link_arm_moveit_config/tools/README.md#gazebo-录包分析)。已有图和 NPZ 不代表本次已重新验证控制器运行或比较实验的因果结论。
+
 ## 只读检查
 
 在工作空间根目录加载 ROS 环境后查看，无需启动 Gazebo，也不会向控制话题发布消息：
@@ -31,6 +59,9 @@ ros2 bag info osc_records/baseline_01
 ros2 bag info osc_records/saturation_01
 ros2 bag info osc_records/periodic_01
 ros2 bag info osc_records/periodic_60s_01
+ros2 bag info osc_records/moveit_osc_effort_20261013_103450
+ros2 bag info osc_records/moveit_osc_cm200_20261013_110618
+ros2 bag info osc_records/moveit_osc_cm100_repeat_20261013_111108
 ```
 
 如果后续需要回放，应先隔离正在运行的控制系统；这些数据包含力矩命令话题，直接回放会发布记录中的消息。读取统计和查看下方图片不需要回放。

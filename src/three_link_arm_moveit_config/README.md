@@ -2,6 +2,8 @@
 
 三连杆机械臂的 MoveIt 配置包，包含 Setup Assistant 生成的配置与组件启动入口。返回[工作空间说明](../../README.md)；模型和独立 Gazebo JTC 实验见[描述包](../three_link_arm_description/README.md)。
 
+本包现在还包含[轨迹工具](tools/README.md)和[离线实验](manual_tests/)，用于将 MoveIt 保存的关节轨迹交给另一套 OSC effort 节点执行；样例及派生数据见[轨迹记录目录](../../moveit_trajectory_records/README.md)。
+
 ## 当前配置
 
 | 项目 | 内容 |
@@ -67,6 +69,8 @@ ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
 
 ## 与 Gazebo JTC 的关系及边界
 
+本节讨论 MoveIt 动作接口驱动 JTC。另一条文件轨迹路径使用 `three_link_arm_moveit_osc.launch.py`、`moveit_osc_effort_monitor` 和 effort 控制器，不通过 JTC，也不是新注册的 MoveIt 动作控制器。两条路径应分开运行。
+
 描述包的 JTC 实验使用 `three_link_arm_jtc_gazebo.urdf` 和 `three_link_arm_jtc_controllers.yaml`，提供 Gazebo position 接口，并将插件 `position_proportional_gain` 设为 `0.2`。本包的动作映射使用相同控制器名称；MoveIt 的控制器映射本身不会替代 Gazebo 控制器的启动配置，也不会在禁用自动管理时替你激活它。
 
 当前需要区分以下事项：
@@ -75,3 +79,9 @@ ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
 - 生成的控制 Xacro 使用 mock 后端，而描述包有单独的 Gazebo 后端。基础 URDF 已含 ros2_control 配置，使用包装 Xacro 前还需核对展开后的硬件定义，不能直接把它当作已验证的 Gazebo 模型。
 - 命名姿态、mock 初值及 Gazebo 初值属于不同配置层；不要将 `[0, 0, 0]` 当作 OSC 的非奇异启动姿态。
 - 仓库已保存三组 JTC 参考/反馈状态录包、曲线与一份分析摘要，见[JTC 实验记录](../../jtc_records/README.md)。记录可用于复核对应时段的跟踪情况；本次文档更新只做文件检查，不代表重新运行或完成全部规划/执行验收。
+
+## MoveIt 轨迹到 OSC 的工具与实验
+
+当前流程是采集 `/display_planned_path` 的新规划，保存 `t/q/dq/ddq`，转换为 `arm_base` 下的二维末端参考，再做 `100 Hz` 五次 Hermite 插值、动力学一致性检查和离线闭环实验，最后由文件驱动 ROS 节点执行。具体命令、依赖与文件覆盖行为见[工具 README](tools/README.md)。
+
+`tools/` 和 `manual_tests/` 目前没有在 CMake 中安装，也未注册 `ros2 run` 入口；应从源码路径执行。数学核对、离线积分结果、已有 Gazebo 录包和真实硬件验收是不同证据，不能互相替代。

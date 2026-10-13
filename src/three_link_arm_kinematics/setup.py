@@ -34,6 +34,7 @@ setup(
           'trajectory_tracking_analyzer = three_link_arm_kinematics.trajectory_tracking_analyzer:main',
           'operational_space_control_monitor = three_link_arm_kinematics.operational_space_control_monitor:main',
           'osc_auto_activator = three_link_arm_kinematics.osc_auto_activator:main',
+          'moveit_osc_effort_monitor = three_link_arm_kinematics.moveit_osc_effort_monitor:main',
         ],
     },
 )

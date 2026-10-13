@@ -12,6 +12,7 @@
 | [`ros2_control.launch.py`](launch/ros2_control.launch.py) | 位置轨迹实验 | `mock_components/GenericSystem` 模拟硬件，不进行 Gazebo 动力学仿真 |
 | [`three_link_arm_gazebo.launch.py`](launch/three_link_arm_gazebo.launch.py) | Gazebo 力矩控制实验 | Gazebo 状态、OSC 力矩、就绪检查、自动激活及独立状态监视 |
 | [`three_link_arm_jtc.launch.py`](launch/three_link_arm_jtc.launch.py) | Gazebo 位置轨迹实验 | 独立 position 型 JTC，加载后保持 `inactive`，不运行 OSC |
+| [`three_link_arm_moveit_osc.launch.py`](launch/three_link_arm_moveit_osc.launch.py) | 文件轨迹 OSC 实验 | MoveIt NPZ、effort 模型、就绪检查、自动激活与监视器 |
 
 JTC 启动文件已从原来的双层 `launch/launch/` 移到正常 `launch/` 目录，命令见下文。
 
@@ -22,7 +23,7 @@ JTC 启动文件已从原来的双层 `launch/launch/` 移到正常 `launch/` �
 | [`urdf/three_link_arm.urdf`](urdf/three_link_arm.urdf) | RViz 与模拟硬件模型；本次补充底座、第一和第二连杆的碰撞几何 |
 | [`config/controllers.yaml`](config/controllers.yaml) | `joint_state_broadcaster` 与位置型 `joint_trajectory_controller` |
 | [`urdf/three_link_arm_gazebo.urdf`](urdf/three_link_arm_gazebo.urdf) | 世界固定基座、碰撞/惯性参数及 `gz_ros2_control` effort 接口；初始关节角 `[0.5, -0.8, 1.2]` |
-| [`config/three_link_arm_controllers.yaml`](config/three_link_arm_controllers.yaml) | OSC Gazebo 的状态广播器与 `effort_controller`，另声明 effort 型 JTC；原 launch 不加载该 JTC |
+| [`config/three_link_arm_controllers.yaml`](config/three_link_arm_controllers.yaml) | OSC Gazebo 的管理器当前为 `200 Hz`，使用状态广播器与 `effort_controller`；另声明但不由原 launch 加载 effort 型 JTC |
 | [`urdf/three_link_arm_jtc_gazebo.urdf`](urdf/three_link_arm_jtc_gazebo.urdf) | 独立 Gazebo position 命令接口，初始关节角 `[0.5, -0.8, 1.2]`，插件 `position_proportional_gain = 0.2` |
 | [`config/three_link_arm_jtc_controllers.yaml`](config/three_link_arm_jtc_controllers.yaml) | 独立 position 型 JTC 与状态广播器，管理器更新频率 `100 Hz` |
 | [`config/osc_params.yaml`](config/osc_params.yaml) | OSC 启动参数；由 Gazebo launch 自动传给控制节点 |
@@ -83,4 +84,21 @@ JTC 专用 URDF 在 `gz_ros2_control` 插件中配置 `position_proportional_gai
 
 [MoveIt 配置包](../three_link_arm_moveit_config/README.md)提供同名 JTC 的动作映射及 `move_group_gazebo.launch.py`。后者使用仿真时间并允许执行，但禁用自动控制器管理；需单独启动规划组件并确认 JTC 已激活，没有统一的一键启动入口。已有跟踪录包及曲线见[JTC 实验记录](../../jtc_records/README.md)。OSC 与 JTC 两个 Gazebo 入口都使用 `empty` 世界与同名控制器管理器，应分开运行。
 
-本配置用于仿真实验；静态配置、启动顺序和参数检查不等于已经通过 Gazebo 闭环或真实硬件验证。
+## MoveIt 文件轨迹 OSC 启动
+
+新增入口复用 `three_link_arm_gazebo.urdf` 和 effort 控制器，不使用 JTC 的 position 模型。必须提供 `trajectory_file`：
+
+```bash
+ros2 launch three_link_arm_description three_link_arm_moveit_osc.launch.py \
+  trajectory_file:=$HOME/ros2_ws/moveit_trajectory_records/moveit_trajectory_20261013_085205_osc_interp_100hz.npz
+```
+
+模型生成、状态广播器、未激活 effort 控制器按成功退出事件顺序启动，随后运行 `moveit_osc_effort_monitor` 与 `osc_auto_activator`。监视器也由 launch 启动。控制节点使用仿真时间，将 `/joint_effort_command` 重映射到 `/effort_controller/commands`。
+
+此 launch 显式传入任务增益 `[10,10]` / `[4.43,4.43]`、重力 `9.8`、姿态增益 `1.0` / `0.5` 和逐关节 `10 N·m` 限幅。源码虽定义了 OSC YAML 路径变量，但没有实际加载该文件；修改 `osc_params.yaml` 不会自动改变此入口参数。
+
+复用的 effort 控制器 YAML 当前将管理器更新率设为 `200 Hz`；文件驱动 OSC 节点定时周期仍为 `0.01 s`（`100 Hz`），参考文件的 100 Hz 采样又是另一层，不应把三者视作同一实测频率。
+
+就绪后自动激活 effort 控制器，轨迹仍需手动 `/osc_start`。逐关节起点偏差须不超过 `0.02 rad`。控制逻辑见[节点说明](../three_link_arm_kinematics/README.md#moveit-文件轨迹-osc)，文件生成见[轨迹工具](../three_link_arm_moveit_config/tools/README.md)。
+
+与其他 Gazebo 入口共用世界、话题和服务名，应分开运行。监视器仍依赖 `~/ros2_ws/scripts/osc_controller_state_watch.py` 与 `empty` 世界。静态配置和已有录包不等于对任意新轨迹的闭环或硬件验收。
