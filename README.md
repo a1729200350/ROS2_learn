@@ -23,8 +23,28 @@
 | [MoveIt → OSC 工具](src/three_link_arm_moveit_config/tools/README.md) | 规划轨迹采集、任务参考转换、100 Hz 插值及离线实验 |
 | [MoveIt 轨迹文件](moveit_trajectory_records/README.md) | 原始/转换后 NPZ、字段、离线闭环结果与使用边界 |
 | [辅助脚本](scripts/README.md) | 控制器状态监视、OSC 绘图与 MoveIt/JTC 录包分析 |
-| [OSC 实验记录](osc_records/README.md) | 原有四组及新增三组 MoveIt-OSC MCAP 数据、实际时长和分析文件 |
-| [MoveIt/JTC 实验记录](jtc_records/README.md) | 三组关节轨迹跟踪录包、曲线与已有分析摘要 |
+| [OSC 实验记录](osc_records/README.md) | 七组历史录包的元数据、实际时长和精选分析文件；原始 MCAP 仅本地保留 |
+| [MoveIt/JTC 实验记录](jtc_records/README.md) | 三组关节轨迹跟踪记录的元数据、曲线与已有分析摘要 |
+
+## 实验数据管理
+
+代码仓库保留源码、配置、分析脚本、复现说明和精选结果，不再随日常提交上传完整录包。
+
+| 内容 | 保存方式 |
+| --- | --- |
+| 原始 ROS 录包（MCAP、DB3、BAG） | 保留在本地原位置，默认不纳入 Git |
+| 已有录包的 `metadata.yaml` | 继续跟踪，供查看话题、时长和消息数；元数据不能替代完整录包 |
+| 已有结果图片、分析文本和 7 个 NPZ 样例 | 继续跟踪，包括复现所需的原始、转换和插值轨迹，以及精选分析结果 |
+| 实验目录内新增的轨迹、录包元数据、图片与分析输出 | 默认仅本地保存；确认有复现或展示价值后，再明确选择具体文件纳入仓库 |
+| 实验目录内的 README | 不受实验数据忽略规则限制 |
+
+`.gitignore` 对 `osc_records/`、`jtc_records/`、`moveit_trajectory_records/` 和 `osc_ros2_run1/` 中的新增数据生效；没有全局忽略所有 NPZ。已跟踪的样例仍会显示后续修改，不能把忽略规则当成冻结文件。源码和实验脚本的读写路径没有改变。
+
+**新克隆的当前版本不包含原始录包。** 查看已有图表、说明及使用已保留的轨迹样例不需要 MCAP；重新分析或回放历史录包，需要先取得完整数据并放回文档指定的位置，且保留同组 `metadata.yaml` 和全部数据分片。不要仅凭元数据文件存在就直接运行录包分析。
+
+本次只停止跟踪原始 MCAP，本地文件不删除、不移动，也不额外备份；历史提交不重写，因此旧录包仍存在于历史中，完整克隆的历史体积不会立刻缩小。取消跟踪会在 GitHub 的最新版本表现为文件移除，并不表示原工作空间的录包已被删除。其他已有克隆在同步该变更前，也应先将自己需要的录包保留到仓库外。
+
+后续公开关键实验时，可单独选择完整录包作为 Release 附件并在记录页提供链接；目前未发布这类附件，也未启用 Git LFS。新的实验说明应记录对应代码提交、环境版本、实际参数、采集与分析命令以及关键结果；历史记录缺少的参数不作补猜。
 
 ## 环境
 
@@ -46,7 +66,7 @@ git clone git@github.com:a1729200350/ROS2_learn.git ros2_ws
 cd ros2_ws
 ```
 
-当前 OSC Gazebo 启动文件通过固定路径 `~/ros2_ws/scripts/osc_controller_state_watch.py` 启动监视脚本，两个绘图脚本也分别固定读取 `~/ros2_ws/osc_records/baseline_01` 和 `periodic_01`，因此上面的目录名称与位置有实际意义。已有工作空间不必重新克隆；使用其他路径时需先核对这些路径假设。
+当前 OSC Gazebo 启动文件通过固定路径 `~/ros2_ws/scripts/osc_controller_state_watch.py` 启动监视脚本，两个绘图脚本也分别固定读取 `~/ros2_ws/osc_records/baseline_01` 和 `periodic_01`，因此上面的目录名称与位置有实际意义。已有工作空间不必重新克隆；使用其他路径时需先核对这些路径假设。新克隆不含这两组原始 MCAP，绘图前须按[实验数据管理](#实验数据管理)补齐录包。
 
 首次使用 `rosdep` 时，需要先完成系统级初始化：
 
@@ -332,13 +352,13 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 轨迹时间使用节点的 ROS 时钟；Gazebo 实验需设置 `use_sim_time:=true` 并确保 `/clock` 桥接有效，独立软件仿真默认使用系统时间。反馈超时及耗时诊断仍采用 `time.monotonic()`。超时日志包含反馈年龄、回调间隔、上一轮完整控制耗时和上一轮力矩发布耗时。
 
-仓库内 `osc_ros2_run1/` 保存一份历史 MCAP 实验录包及 `metadata.yaml`，约 `68.65 s`、共 `17,506` 条消息，仅包含 `/joint_states`、`/joint_effort_command` 和 `/osc_tracking`。该录包未随本次控制逻辑更新而重新采集。可只读查看录包信息：
+`osc_ros2_run1/` 在当前仓库中保留一份历史录包的 `metadata.yaml`，原始 MCAP 仅本地保留。该记录约 `68.65 s`、共 `17,506` 条消息，仅包含 `/joint_states`、`/joint_effort_command` 和 `/osc_tracking`，未随本次文档调整而重新采集。本地具备完整录包时，可只读查看信息：
 
 ```bash
 ros2 bag info osc_ros2_run1
 ```
 
-`osc_records/` 保存四组原有基线/周期录包，以及第 12 节对应的三组 MoveIt-OSC 录包，详见[实验记录说明](osc_records/README.md)。这些数据包含 `/effort_controller/commands`，与历史 `osc_ros2_run1/` 的力矩话题不同。周期绘图脚本直接使用控制器的轨迹时间并绘制全部启动后数据；录包名中的 `60s` 不等于实测时长，目录名称和当前 YAML 也不能单独证明录制参数。
+`osc_records/` 保留四组原有基线/周期实验和第 12 节对应三组 MoveIt-OSC 实验的元数据与精选分析结果，原始 MCAP 不再跟踪，详见[实验记录说明](osc_records/README.md)。这些记录包含 `/effort_controller/commands`，与历史 `osc_ros2_run1/` 的力矩话题不同。周期绘图脚本直接使用控制器的轨迹时间并绘制全部启动后数据；录包名中的 `60s` 不等于实测时长，目录名称和当前 YAML 也不能单独证明录制参数。
 
 ### 10. Gazebo 模型与自动激活流程
 
@@ -392,7 +412,7 @@ ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
 
 该入口只启动 `move_group`，使用仿真时间、允许轨迹执行并发布规划场景，同时禁用 MoveIt 自动管理控制器；它不会新建控制器管理器或替你激活 JTC。执行前仍需通过独立流程确认 JTC 已为 `active`，不应再重复启动普通 `move_group.launch.py`。RViz 也不包含在这个入口中。
 
-目前仍没有统一 `demo.launch.py`，`kinematics.yaml` 为空映射，生成的控制 Xacro 使用 mock 硬件而不是 Gazebo 系统。配置内容、入口及集成边界见[MoveIt README](src/three_link_arm_moveit_config/README.md)。仓库现有三组 JTC 参考/反馈录包和已有曲线，见[实验记录](jtc_records/README.md)；它们可用于检查记录中的跟踪情况，但本次文档更新没有重新运行 Gazebo 或验证每次规划动作的成功状态。
+目前仍没有统一 `demo.launch.py`，`kinematics.yaml` 为空映射，生成的控制 Xacro 使用 mock 硬件而不是 Gazebo 系统。配置内容、入口及集成边界见[MoveIt README](src/three_link_arm_moveit_config/README.md)。仓库保留三组 JTC 参考/反馈记录的元数据和已有曲线，完整录包仅本地保存，见[实验记录](jtc_records/README.md)；这些结果可用于查看记录中的跟踪情况，但本次文档更新没有重新运行 Gazebo 或验证每次规划动作的成功状态。
 
 ### 12. 保存的 MoveIt 轨迹经 OSC 执行
 
@@ -439,26 +459,25 @@ ros2_ws/
 │   └── analyze_moveit_jtc_bag.py
 ├── jtc_records/
 │   ├── README.md
-│   ├── moveit_jtc_*/           # 三组 MCAP 录包
+│   ├── moveit_jtc_*/           # 三组元数据；原始 MCAP 仅本地
 │   └── *_analysis*/           # 已保存曲线；另有一份分析文本
 ├── moveit_trajectory_records/
 │   ├── README.md
-│   ├── *.npz                  # 原始、转换和插值轨迹
-│   └── *_closed_loop/         # 离线跟踪数据与图片
+│   ├── *.npz                  # 精选原始、转换和插值轨迹
+│   └── *_closed_loop/         # 精选离线跟踪数据与图片
 ├── osc_records/
 │   ├── README.md
-│   ├── baseline_01/
+│   ├── baseline_01/           # 以下录包目录仅跟踪元数据
 │   ├── saturation_01/
 │   ├── periodic_01/
 │   ├── periodic_60s_01/
-│   ├── moveit_osc_*/            # 三组文件轨迹录包及分析目录
+│   ├── moveit_osc_*/           # 三组元数据及精选分析目录
 │   ├── baseline_01_error.png
 │   ├── baseline_01_torque.png
 │   ├── baseline_01_velocity.png
 │   └── periodic_01_*.png
 ├── osc_ros2_run1/
-│   ├── metadata.yaml
-│   └── osc_ros2_run1_0.mcap
+│   └── metadata.yaml          # 原始 MCAP 仅本地，不在当前 Git 版本
 ├── reference/
 │   └── finite_difference_velocity_reference.py
 └── src/

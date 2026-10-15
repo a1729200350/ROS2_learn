@@ -78,7 +78,7 @@ ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
 - `kinematics.yaml` 尚未指定求解器，不能据此宣称任意末端位姿逆解可用；本模型只有三个转动关节。
 - 生成的控制 Xacro 使用 mock 后端，而描述包有单独的 Gazebo 后端。基础 URDF 已含 ros2_control 配置，使用包装 Xacro 前还需核对展开后的硬件定义，不能直接把它当作已验证的 Gazebo 模型。
 - 命名姿态、mock 初值及 Gazebo 初值属于不同配置层；不要将 `[0, 0, 0]` 当作 OSC 的非奇异启动姿态。
-- 仓库已保存三组 JTC 参考/反馈状态录包、曲线与一份分析摘要，见[JTC 实验记录](../../jtc_records/README.md)。记录可用于复核对应时段的跟踪情况；本次文档更新只做文件检查，不代表重新运行或完成全部规划/执行验收。
+- 仓库保留三组 JTC 参考/反馈状态记录的元数据、曲线与一份分析摘要，完整 MCAP 仅本地保存，见[JTC 实验记录](../../jtc_records/README.md)。已有结果可用于查看对应时段的跟踪情况；重新分析需先取得完整录包，本次文档更新不代表重新运行或完成全部规划/执行验收。
 
 ## MoveIt 轨迹到 OSC 的工具与实验
 

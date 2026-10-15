@@ -1,6 +1,8 @@
 # OSC 实验记录
 
-本目录保存七组 ROS 2 Jazzy / MCAP 录包，包括原有基线/周期实验和新增的三组 MoveIt 文件轨迹 OSC 实验。返回[首页](../README.md)；原有绘图见[辅助脚本](../scripts/README.md)，文件轨迹分析见[MoveIt 工具](../src/three_link_arm_moveit_config/tools/README.md)。
+本目录在 Git 中保留七组 ROS 2 Jazzy / MCAP 实验的元数据和精选分析结果，包括基线/周期实验和三组 MoveIt 文件轨迹 OSC 实验。原始 MCAP 仅保留在本地原位置，不随日常提交上传。返回[首页](../README.md)；原有绘图见[辅助脚本](../scripts/README.md)，文件轨迹分析见[MoveIt 工具](../src/three_link_arm_moveit_config/tools/README.md)。
+
+新克隆只含元数据和已保存结果，不含完整录包。下文的录包读取、分析和回放需要先取得同组 `metadata.yaml` 及所有 MCAP 分片；已有图片和 NPZ 可以直接查看。新增实验数据默认忽略，精选文件需另行确认后纳入 Git，详见[数据管理规则](../README.md#实验数据管理)。下文历史统计和曲线沿用已有记录，本次管理调整未重新采集或运行分析。
 
 ## 录包索引
 
@@ -13,7 +15,7 @@
 | [`periodic_01`](periodic_01/metadata.yaml) | 65.92 s | 19,423 | 6,593 | 6,415 | 6,415 |
 | [`periodic_60s_01`](periodic_60s_01/metadata.yaml) | 150.11 s | 44,933 | 14,912 | 15,010 | 15,011 |
 
-每组目录都包含 `metadata.yaml` 和一个同名前缀的 `_0.mcap` 文件。`/joint_states` 为 `sensor_msgs/msg/JointState`，另两个话题为 `std_msgs/msg/Float64MultiArray`。跟踪消息的[16 字段格式](../src/three_link_arm_kinematics/README.md#osc-接口)与关节空间 CSV 的 13 字段格式不同。
+完整的本地录包每组包含 `metadata.yaml` 和一个同名前缀的 `_0.mcap` 文件；当前 Git 版本只跟踪前者。`/joint_states` 为 `sensor_msgs/msg/JointState`，另两个话题为 `std_msgs/msg/Float64MultiArray`。跟踪消息的[16 字段格式](../src/three_link_arm_kinematics/README.md#osc-接口)与关节空间 CSV 的 13 字段格式不同。
 
 这些目录名用于区分记录，不是完整的工况说明。附带元数据没有保存控制增益、力矩上限或参数快照；不能仅凭 `saturation_01` 的名称推断当时具体的限幅值，也不能将当前 `osc_params.yaml` 当作录制参数证明。录包时长包含等待等阶段，不等于轨迹移动时长。
 
@@ -51,7 +53,7 @@
 
 ## 只读检查
 
-在工作空间根目录加载 ROS 环境后查看，无需启动 Gazebo，也不会向控制话题发布消息：
+先确认本地已经具备完整录包，再在工作空间根目录加载 ROS 环境后查看，无需启动 Gazebo，也不会向控制话题发布消息：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -106,6 +108,6 @@ ros2 bag info osc_records/moveit_osc_cm100_repeat_20261013_111108
 
 ## 历史记录与结果边界
 
-根目录另有 [`osc_ros2_run1/`](../osc_ros2_run1/)，其命令话题是 `/joint_effort_command`，与本目录录包不同。旧根目录 CSV 已从当前版本移除，可从 Git 历史中查看；需要新的 CSV 时由关节空间记录器重新生成。
+根目录另有 [`osc_ros2_run1/`](../osc_ros2_run1/)，当前 Git 仅保留其元数据，完整录包仅本地保存。其命令话题是 `/joint_effort_command`，与本目录录包不同。旧根目录 CSV 已从当前版本移除，可从 Git 历史中查看；需要新的 CSV 时由关节空间记录器重新生成。
 
 保留录包和曲线有助于复核实验，但不能仅凭文件存在认定某组参数、保护动作或 Gazebo 闭环已通过验收；当前文档没有为未记录的工况补作推断。

@@ -4,6 +4,8 @@
 
 MoveIt 轨迹采集、转换、插值及文件轨迹 OSC 的录包分析位于另一个目录，见[MoveIt 工具说明](../src/three_link_arm_moveit_config/tools/README.md)，不要与本目录的 JTC 状态分析或基线绘图混淆。
 
+原始 MCAP 已停止 Git 跟踪，新克隆不含完整录包。下列绘图和 JTC 分析命令都需要先将完整录包放回指定路径；已有曲线和摘要可直接查看。脚本及其读写路径未因这次数据管理调整而修改，详见[数据管理规则](../README.md#实验数据管理)。
+
 ## 控制器与 OSC 输出监视
 
 [`osc_controller_state_watch.py`](osc_controller_state_watch.py) 由原 OSC 的 `three_link_arm_gazebo.launch.py` 或文件驱动的 `three_link_arm_moveit_osc.launch.py` 自动启动，不必另开一份；独立 JTC launch 不启动它。它不是纯日志查看器：触发故障后会主动请求暂停仿真。
@@ -92,4 +94,4 @@ python3 scripts/analyze_moveit_jtc_bag.py \
 - 输出该窗口内的逐关节 RMS、最大绝对误差（rad）及 RMS（deg），并绘制参考/反馈位置和误差；RMS 按样本计算，不是时间加权积分。
 - 在速度足够大的样本上拟合 `误差 ≈ 等效滞后 × 参考速度`，报告拟合滞后与残差 RMS；不足十个有效样本时不拟合。该值是等效跟踪滞后，不是独立测量的通信或调度延迟。
 
-若录包没有有效控制器状态、时间不递增或未检测到期望运动，脚本会报错。现有录包、图片和已保存文本见[JTC 实验记录](../jtc_records/README.md)，查看它们不需要重新运行分析脚本。
+若录包没有有效控制器状态、时间不递增或未检测到期望运动，脚本会报错。已有录包的元数据、图片和已保存文本见[JTC 实验记录](../jtc_records/README.md)，查看这些文件不需要重新运行分析脚本；原始 MCAP 需另外取得。

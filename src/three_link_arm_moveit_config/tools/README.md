@@ -13,6 +13,8 @@
 
 转换和插值不会改写原始输入，但会覆盖同名派生输出；录包分析也会覆盖同名结果。仓库已经保留样例，浏览数据不必重跑这些命令。
 
+精选轨迹 NPZ、分析 NPZ 和图片继续跟踪；实验目录中的新增数据默认仅本地保存。原始 MCAP 不再纳入 Git，新克隆无法直接运行依赖历史录包的分析命令，需要先取得完整录包。数据保留范围见[首页规则](../../../README.md#实验数据管理)，本次未修改任何工具的读写路径。
+
 ## 采集新规划
 
 在 ROS 2 环境中具备 `rclpy`、`moveit_msgs` 和 NumPy 后，从工作空间根目录启动：
@@ -61,7 +63,7 @@ python3 src/three_link_arm_moveit_config/manual_tests/test_moveit_osc_torque_con
 
 ## Gazebo 录包分析
 
-在 ROS 环境具备 `rosbag2_py`、MCAP 插件、`std_msgs`、NumPy 和 Matplotlib 后，例如：
+先取得完整 MCAP 录包并放回下面指定目录，再在 ROS 环境具备 `rosbag2_py`、MCAP 插件、`std_msgs`、NumPy 和 Matplotlib 后运行，例如：
 
 ```bash
 python3 src/three_link_arm_moveit_config/tools/analyze_moveit_osc_bag.py \

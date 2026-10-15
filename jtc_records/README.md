@@ -1,6 +1,8 @@
 # MoveIt/JTC 实验记录
 
-本目录保存三组 ROS 2 Jazzy / MCAP 关节轨迹控制器记录，以及已有的位置、误差曲线和一份分析文本。返回[首页](../README.md)；分析算法与输出规则见[脚本说明](../scripts/README.md#moveitjtc-录包分析)。
+本目录在 Git 中保留三组 ROS 2 Jazzy / MCAP 关节轨迹控制器记录的元数据，以及已有的位置、误差曲线和一份分析文本。原始 MCAP 仅保留在本地原位置，不随日常提交上传。返回[首页](../README.md)；分析算法与输出规则见[脚本说明](../scripts/README.md#moveitjtc-录包分析)。
+
+新克隆不含完整录包，只有 `metadata.yaml` 不能重新分析或回放；需先取得相应 MCAP 数据并与元数据放在同一目录。已有图片和分析文本可直接查看。新增实验数据默认仅本地保存，详见[数据管理规则](../README.md#实验数据管理)。下文统计沿用已有记录，本次管理调整未重新采集或生成曲线。
 
 ## 录包索引
 
@@ -20,7 +22,7 @@ JTC 状态话题为 `/joint_trajectory_controller/controller_state`，类型为 
 
 ## 只读查看
 
-在工作空间根目录运行：
+本地具备完整录包后，在工作空间根目录运行：
 
 ```bash
 source /opt/ros/jazzy/setup.bash

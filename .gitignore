@@ -5,3 +5,26 @@ log/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Raw ROS recordings stay local; existing metadata and selected results stay tracked.
+*.mcap
+*.db3
+*.db3-wal
+*.db3-shm
+*.bag
+*.bag.active
+
+# New experiment data is local by default. Existing tracked samples are unaffected.
+# Keep README files discoverable; explicitly select any additional published samples.
+/osc_records/**
+!/osc_records/**/
+!/osc_records/**/README.md
+/jtc_records/**
+!/jtc_records/**/
+!/jtc_records/**/README.md
+/moveit_trajectory_records/**
+!/moveit_trajectory_records/**/
+!/moveit_trajectory_records/**/README.md
+/osc_ros2_run1/**
+!/osc_ros2_run1/**/
+!/osc_ros2_run1/**/README.md
