@@ -50,16 +50,38 @@ python3 src/three_link_arm_moveit_config/tools/interpolate_moveit_trajectory.py 
 | --- | --- | --- |
 | [`test_moveit_osc_reference.py`](../manual_tests/test_moveit_osc_reference.py) | 不接收文件参数，使用源码内单个固定参考点核对任务参考与 `J_dot dq` | 否，打印结果 |
 | [`test_moveit_osc_torque_consistency.py`](../manual_tests/test_moveit_osc_torque_consistency.py) | 接收转换或插值 NPZ；在理想跟踪状态比较 OSC 加零空间前馈与完整逆动力学，并检查参考一致性 | 否，打印结果与力矩范围 |
-| [`test_moveit_osc_closed_loop.py`](../manual_tests/test_moveit_osc_closed_loop.py) | 接收密集 NPZ；控制周期 `10 ms`、半隐式欧拉积分 `1 ms`、结束后继续保持约 `1 s`、逐关节 `±10 N·m` 限幅 | 写 `<输入名>_closed_loop/` 内 NPZ 和三张图 |
+| [`test_moveit_osc_closed_loop.py`](../manual_tests/test_moveit_osc_closed_loop.py) | 密集 NPZ；A/B/C 控制方案、可选命令延迟；`10 ms` 控制、`1 ms` 积分、约 `1 s` 终点保持、逐关节 `±10 N·m` 限幅 | 新目录内每方案一个 NPZ、汇总 CSV 和六张对比图 |
+| [`test_moveit_osc_singularity_profile.py`](../manual_tests/test_moveit_osc_singularity_profile.py) | 参考 NPZ 与 Gazebo 分析 NPZ；比较 Jacobian 奇异值、条件数与操作空间惯性最大特征值 | 否，打印统计 |
+| [`test_osc_regularization.py`](../manual_tests/test_osc_regularization.py) | 同上；`--case all/force/projector/split` 比较任务正则化、零空间泄漏和分离式投影 | 否，打印结果 |
+| [`test_osc_singular_direction.py`](../manual_tests/test_osc_singular_direction.py) | 同上；默认 `--scale 1 3`，比较最敏感姿态和完全伸直姿态下的方向降级 | 否，打印结果 |
+| [`test_osc_qp_task.py`](../manual_tests/test_osc_qp_task.py) | 固定姿态、偏置已补偿的增量模型；比较截断、软/硬任务和不可行目标 | 否，检查求解状态、力矩与任务等式 |
+| [`test_osc_qp_dynamics.py`](../manual_tests/test_osc_qp_dynamics.py) | 固定姿态的静止/非零速度状态，包含重力、速度偏置及 `Jdot dq`；运动状态另加入零空间姿态力矩 | 否，检查完整动力学任务残差、力矩余量和姿态项泄漏 |
 
-后两项需要可导入工作空间的 `three_link_arm_kinematics`；构建并加载 `install/setup.bash` 后，从根目录运行，例如：
+这些实验需要可导入工作空间的 `three_link_arm_kinematics`，QP 实验还需要 SciPy 和 OSQP。构建并加载 `install/setup.bash` 后，从根目录运行，例如：
 
 ```bash
 python3 src/three_link_arm_moveit_config/manual_tests/test_moveit_osc_torque_consistency.py \
   moveit_trajectory_records/moveit_trajectory_20261013_085205_osc_interp_100hz.npz
 ```
 
-离线闭环使用同一标称动力学模型及移动姿态零空间目标，不运行 Gazebo；重复运行会覆盖 `tracking.npz`、`task_error.png`、`joint_error.png`、`torque.png`。这些结果不能替代真实反馈闭环验证。
+实验复用四个同目录模块：[`osc_analysis_common.py`](../manual_tests/osc_analysis_common.py) 负责轨迹读取及矩阵分析；[`osc_direction_common.py`](../manual_tests/osc_direction_common.py) 负责方向权重实验；[`osc_qp_common.py`](../manual_tests/osc_qp_common.py) 负责可行性和 QP 求解；[`osc_simulation_common.py`](../manual_tests/osc_simulation_common.py) 负责闭环动力学、延迟队列、结果汇总及 `calculate_posture_torque` 姿态力矩辅助函数。总力矩 QP 入口从该仿真模块导入姿态辅助函数，因此还需要可导入 Matplotlib。运行入口脚本时会从同目录加载这些模块。
+
+### A/B/C 闭环与命令延迟
+
+```bash
+python3 -B src/three_link_arm_moveit_config/manual_tests/test_moveit_osc_closed_loop.py \
+  moveit_trajectory_records/moveit_trajectory_20261013_085205_osc_interp_100hz.npz \
+  --modes A_strict B_all_damped C_split --delay-ms 20
+```
+
+- `A_strict` 沿用严格操作空间动力学和动态一致零空间；`B_all_damped` 同时正则化任务逆惯性和零空间矩阵；`C_split` 只正则化主任务，零空间用 SVD 基构造精确投影。B/C 保留完整关节动力学偏置补偿。
+- 默认运行三种模式且 `--delay-ms 0`；延迟必须为非负 `10 ms` 整数倍。延迟实验将首条力矩预置为初始保持值，后续命令通过队列延迟生效，不模拟启动阶段的自由下落。
+- 默认输出目录为 `<输入名>_closed_loop_delay_<三位毫秒数>ms_<时间戳>/`，也可通过 `--output` 指定一个尚不存在的目录；已存在的目录会被拒绝，不会覆盖旧结果。
+- 每个方案输出同名 NPZ，如 `A_strict.npz`；另有 `summary.csv`、末端 x/y 误差、正则化参数、最小奇异值、姿态加速度泄漏及 joint1 计算/施加力矩共六张对比图。
+- NPZ 中 `tau_computed` 是本轮计算并限幅的指令，`tau` 是实际施加的力矩；`command_age_ms` 在控制采样时刻记录所用指令年龄。`--baseline` 可读取另一份该格式汇总 CSV，按方案打印 RMS 差值，但不会自动判断两份实验的参数是否一致。
+- 某方案触发安全退出时，保存已有记录并在汇总中标记 `completed=False`；判断是否完成应查看汇总，不能只看进程退出码。只有完整完成的方案才报告全程运动 RMS。
+
+本次使用仓库现有密集轨迹，在内存中检查三种方案各自的 `0/20 ms` 延迟，共六组均完成 1,500 个控制采样，输出力矩均在 `±10 N·m` 内；队列力矩与指定延迟的计算指令对应。另已运行上表新增的三个分析入口和两个 QP 入口，总力矩实验新增的姿态项检查也已通过。在该固定工况下，加入姿态目标前后的 QP 力矩基本相同；这只验证主任务和力矩约束未被破坏，不证明姿态已收敛。没有覆盖既有 NPZ 或图片。这些是同一标称模型上的离线检查，不替代 Gazebo、真实反馈或硬件验收，也不能证明三种方案对所有轨迹均适用。
 
 ## Gazebo 录包分析
 

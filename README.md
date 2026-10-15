@@ -176,7 +176,7 @@ ros2 topic pub --once /desired_cartesian_velocity geometry_msgs/msg/Twist \
 
 ### 4. ros2_control 轨迹执行与监控
 
-本节使用的 URDF 采用 `mock_components/GenericSystem` 模拟硬件，不是 Gazebo 动力学仿真或真实机械臂驱动。`config/controllers.yaml` 将控制器管理器更新频率设为 `100 Hz`，三个关节使用位置命令接口及位置、速度状态接口。Gazebo 专用配置见第 10 节。
+本节通过 `three_link_arm_mock.urdf.xacro` 包含公共机械结构并添加 `mock_components/GenericSystem` 模拟硬件；基础 `three_link_arm.urdf` 不再内嵌控制块。启动文件调用 `xacro` 展开模型，描述包已声明该依赖。这不是 Gazebo 动力学仿真或真实机械臂驱动。`config/controllers.yaml` 将控制器管理器更新频率设为 `100 Hz`，三个关节使用位置命令接口及位置、速度状态接口。Gazebo 专用配置见第 10 节。
 
 在已加载环境的终端 A 启动控制器与 RViz2（该启动文件已包含 `robot_state_publisher`，不必同时运行 `display.launch.py`）：
 
@@ -437,7 +437,13 @@ ros2 service call /osc_start std_srvs/srv/Trigger "{}"
 
 新节点的 `/osc_start` 复用完整就绪检查，还要求 effort 控制器已激活、仿真时钟有效；各关节与文件起点的偏差须不超过 `0.02 rad`。轨迹结束后保持终点，同次运行不可再次启动。故障边界与原 OSC 不同，见[节点说明](src/three_link_arm_kinematics/README.md#moveit-文件轨迹-osc)。
 
-不要同时运行 JTC Gazebo、原 OSC launch 或第二个力矩发布节点；文件执行阶段不需要 MoveIt 再发 Execute。现有三组跟踪记录见[录包说明](osc_records/README.md#moveit-文件轨迹录包)。本次文档维护只读检查已有数据，没有重新运行实验。
+不要同时运行 JTC Gazebo、原 OSC launch 或第二个力矩发布节点；文件执行阶段不需要 MoveIt 再发 Execute。现有三组跟踪记录见[录包说明](osc_records/README.md#moveit-文件轨迹录包)。本次没有重新运行 Gazebo 或覆盖已有实验数据。
+
+### 13. 正则化、QP 与离线闭环对照
+
+`src/three_link_arm_moveit_config/manual_tests/` 已将重复逻辑整理为四个公共模块，提供奇异性分析、任务/零空间正则化、奇异方向降级、软/硬任务 QP，以及 A/B/C 闭环入口。闭环使用 `10 ms` 控制、`1 ms` 积分，可选择非负控制周期整数倍的命令延迟；结果默认写入新时间戳目录，拒绝覆盖已有目录。具体命令和结果字段见[工具说明](src/three_link_arm_moveit_config/tools/README.md#手动离线实验)。
+
+本次检查通过 Python 语法、XML 解析、两个 Xacro 入口展开、三个轨迹分析入口及两个 QP 实验；总力矩实验还检查了非零速度下的零空间姿态项、主任务等式与力矩约束。现有样例的 A/B/C 三方案在 `0/20 ms` 延迟下共六组内存闭环均完成，检查了有限数值、力矩限制和延迟队列对应关系；没有生成或上传新的实验数据。这些离线方案尚未接入在线控制节点，本次没有进行 ROS/Gazebo 运行或硬件验证。
 
 ## 测试
 

@@ -9,7 +9,7 @@
 | 命令（`ros2 launch three_link_arm_description …`） | 用途 | 状态与控制来源 |
 | --- | --- | --- |
 | [`display.launch.py`](launch/display.launch.py) | RViz 模型显示 | 只启动状态转换与显示；需外部 `/joint_states`，GUI 启动代码当前已注释 |
-| [`ros2_control.launch.py`](launch/ros2_control.launch.py) | 位置轨迹实验 | `mock_components/GenericSystem` 模拟硬件，不进行 Gazebo 动力学仿真 |
+| [`ros2_control.launch.py`](launch/ros2_control.launch.py) | 位置轨迹实验 | 展开独立 mock Xacro，使用 `mock_components/GenericSystem`；不进行 Gazebo 动力学仿真 |
 | [`three_link_arm_gazebo.launch.py`](launch/three_link_arm_gazebo.launch.py) | Gazebo 力矩控制实验 | Gazebo 状态、OSC 力矩、就绪检查、自动激活及独立状态监视 |
 | [`three_link_arm_jtc.launch.py`](launch/three_link_arm_jtc.launch.py) | Gazebo 位置轨迹实验 | 独立 position 型 JTC，加载后保持 `inactive`，不运行 OSC |
 | [`three_link_arm_moveit_osc.launch.py`](launch/three_link_arm_moveit_osc.launch.py) | 文件轨迹 OSC 实验 | MoveIt NPZ、effort 模型、就绪检查、自动激活与监视器 |
@@ -20,7 +20,8 @@ JTC 启动文件已从原来的双层 `launch/launch/` 移到正常 `launch/` �
 
 | 文件 | 作用 |
 | --- | --- |
-| [`urdf/three_link_arm.urdf`](urdf/three_link_arm.urdf) | RViz 与模拟硬件模型；本次补充底座、第一和第二连杆的碰撞几何 |
+| [`urdf/three_link_arm.urdf`](urdf/three_link_arm.urdf) | 公共机械结构、碰撞与惯性参数；不再内嵌 ros2_control 硬件配置 |
+| [`urdf/three_link_arm_mock.urdf.xacro`](urdf/three_link_arm_mock.urdf.xacro) | 包含公共模型，添加一套 `arm_system` mock 硬件及三关节 position 命令、position/velocity 状态接口 |
 | [`config/controllers.yaml`](config/controllers.yaml) | `joint_state_broadcaster` 与位置型 `joint_trajectory_controller` |
 | [`urdf/three_link_arm_gazebo.urdf`](urdf/three_link_arm_gazebo.urdf) | 世界固定基座、碰撞/惯性参数及 `gz_ros2_control` effort 接口；初始关节角 `[0.5, -0.8, 1.2]` |
 | [`config/three_link_arm_controllers.yaml`](config/three_link_arm_controllers.yaml) | OSC Gazebo 的管理器当前为 `200 Hz`，使用状态广播器与 `effort_controller`；另声明但不由原 launch 加载 effort 型 JTC |
@@ -29,6 +30,8 @@ JTC 启动文件已从原来的双层 `launch/launch/` 移到正常 `launch/` �
 | [`config/osc_params.yaml`](config/osc_params.yaml) | OSC 启动参数；由 Gazebo launch 自动传给控制节点 |
 
 `launch/`、`config/`、`urdf/` 通过 CMake 安装到功能包共享目录。新增配置文件后应重新构建，并确认当前终端加载的是本工作空间。
+
+`ros2_control.launch.py` 现在通过 `xacro` 展开 mock 入口，描述包已声明对应运行依赖。MoveIt 包自己的包装 Xacro 仍包含公共 `three_link_arm.urdf`，再添加它自己的 mock 控制块；不会从公共模型重复引入硬件配置。本次只验证两种 Xacro 入口均可展开，且各含一套三关节控制配置，没有启动控制器或 Gazebo 做运行验收。
 
 ## OSC 启动参数
 

@@ -8,18 +8,20 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     pkg_name = "three_link_arm_description"
     # 找到 URDF 文件的路径
+       # mock 硬件专用入口
     urdf_file = PathJoinSubstitution(
         [
             FindPackageShare(pkg_name),
             "urdf",
-            "three_link_arm.urdf"
+            "three_link_arm_mock.urdf.xacro"
         ]
     )
-    # 读取 URDF 文件内容
+
+    # 展开 Xacro，生成最终机器人描述
     robot_description = ParameterValue(
         Command(
             [
-                "cat ",
+                "xacro ",
                 urdf_file
             ]
         ),

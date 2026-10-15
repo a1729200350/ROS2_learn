@@ -76,12 +76,14 @@ ros2 launch three_link_arm_moveit_config move_group_gazebo.launch.py
 当前需要区分以下事项：
 
 - `kinematics.yaml` 尚未指定求解器，不能据此宣称任意末端位姿逆解可用；本模型只有三个转动关节。
-- 生成的控制 Xacro 使用 mock 后端，而描述包有单独的 Gazebo 后端。基础 URDF 已含 ros2_control 配置，使用包装 Xacro 前还需核对展开后的硬件定义，不能直接把它当作已验证的 Gazebo 模型。
+- 生成的控制 Xacro 使用 mock 后端，而描述包有单独的 Gazebo 后端。基础 URDF 现仅保留公共机械结构，本包包装 Xacro 添加自身的控制块；描述包的 mock launch 使用另一独立入口。本次展开检查确认各入口均只有一套控制配置，但不代表 Gazebo 或控制器运行已通过验证。
 - 命名姿态、mock 初值及 Gazebo 初值属于不同配置层；不要将 `[0, 0, 0]` 当作 OSC 的非奇异启动姿态。
 - 仓库保留三组 JTC 参考/反馈状态记录的元数据、曲线与一份分析摘要，完整 MCAP 仅本地保存，见[JTC 实验记录](../../jtc_records/README.md)。已有结果可用于查看对应时段的跟踪情况；重新分析需先取得完整录包，本次文档更新不代表重新运行或完成全部规划/执行验收。
 
 ## MoveIt 轨迹到 OSC 的工具与实验
 
 当前流程是采集 `/display_planned_path` 的新规划，保存 `t/q/dq/ddq`，转换为 `arm_base` 下的二维末端参考，再做 `100 Hz` 五次 Hermite 插值、动力学一致性检查和离线闭环实验，最后由文件驱动 ROS 节点执行。具体命令、依赖与文件覆盖行为见[工具 README](tools/README.md)。
+
+离线实验已整合为正则化、奇异方向、QP 可行性及 A/B/C 闭环对照入口，复用 `manual_tests/` 内的公共模块。闭环入口可选择控制方案和额外命令延迟，默认写入新的时间戳目录；这些离线方案没有自动接入在线 OSC 节点。
 
 `tools/` 和 `manual_tests/` 目前没有在 CMake 中安装，也未注册 `ros2 run` 入口；应从源码路径执行。数学核对、离线积分结果、已有 Gazebo 录包和真实硬件验收是不同证据，不能互相替代。
